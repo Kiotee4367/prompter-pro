@@ -463,6 +463,7 @@ window.onerror = function(msg, url, line, col, err) {
     <div class="mobile-nav" id="mobile-nav">
       <button class="mobile-nav-btn" id="mob-scripts-btn">&#9776; Scripts</button>
       <button class="mobile-nav-btn" id="mob-settings-btn">&#9881; Settings</button>
+      <button class="mobile-nav-btn" id="mob-start-btn" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;">&#9654; Start</button>
     </div>
     <div class="header-row">
       <input type="text" id="script-title-input" placeholder="Episode Title">
@@ -1738,6 +1739,8 @@ if (mobSettingsBtn) mobSettingsBtn.onclick = () => {
   mobileOverlay.classList.add('visible');
 };
 if (mobileOverlay) mobileOverlay.onclick = closeMobileDrawers;
+const mobStartBtn = $('#mob-start-btn');
+if (mobStartBtn) mobStartBtn.onclick = startPrompter;
 
 // ===== SERVICE WORKER REGISTRATION =====
 if ('serviceWorker' in navigator) {
