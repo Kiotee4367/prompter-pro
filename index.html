@@ -364,7 +364,6 @@
     #settings-panel { width: 220px; }
   }
   @media (max-width: 700px) {
-    /* Mobile: stack layout, show panels as toggleable drawers */
     #editor-view { flex-direction: column; }
     #sidebar, #settings-panel { display: none; position: fixed; top: 0; bottom: 0; z-index: 50; width: 280px; overflow-y: auto; }
     #sidebar.mobile-open { display: flex; left: 0; }
@@ -375,25 +374,18 @@
     #main-area .header-row { flex-wrap: wrap; }
     #script-title-input { font-size: 18px; }
     .editor-toolbar { gap: 8px; padding: 6px 8px; }
-    .toolbar-group select, .toolbar-group input { font-size: 11px; }
     .cue-legend { display: none; }
     .bottom-bar { flex-wrap: wrap; gap: 8px; }
-
-    /* Mobile nav buttons */
     .mobile-nav { display: flex !important; gap: 6px; margin-bottom: 8px; }
     .mobile-nav-btn {
       padding: 8px 14px; background: var(--surface); border: 1px solid var(--border);
       border-radius: 6px; color: var(--fg); font-size: 13px; cursor: pointer;
     }
-
-    /* Prompter: bigger touch targets */
     #prompter-hud { opacity: 1; padding: 12px; gap: 6px; flex-wrap: wrap; }
     #prompter-hud .btn { padding: 10px 14px; font-size: 14px; }
     #prompter-text { padding: 0 5% !important; }
     #webcam-pip { width: 120px !important; bottom: 80px; right: 10px; }
   }
-
-  /* Hide mobile nav on desktop */
   .mobile-nav { display: none; }
 </style>
 </head>
@@ -455,7 +447,6 @@ window.onerror = function(msg, url, line, col, err) {
     </div>
   </div>
 
-  <!-- Mobile overlay for closing drawers -->
   <div class="mobile-overlay" id="mobile-overlay"></div>
 
   <!-- Main Editor -->
@@ -1562,7 +1553,7 @@ async function ghFetchEpisodes() {
 
   // Filter episode files and sort newest first
   const episodes = data
-    .filter(f => f.name.startsWith('episode-') && f.name.endsWith('.txt'))
+    .filter(f => (f.name.startsWith('episode-') || f.name.startsWith('special-topics-episode-')) && f.name.endsWith('.txt'))
     .sort((a, b) => b.name.localeCompare(a.name));
 
   if (episodes.length === 0) {
@@ -1573,14 +1564,16 @@ async function ghFetchEpisodes() {
 
   ghEpisodeList.innerHTML = '';
   episodes.forEach(ep => {
-    const dateMatch = ep.name.match(/episode-(\d{4}-\d{2}-\d{2})/);
+    const dateMatch = ep.name.match(/(\d{4}-\d{2}-\d{2})/);
     const dateStr = dateMatch ? dateMatch[1] : ep.name;
+    const isSpecial = ep.name.startsWith('special-topics-');
+    const label = isSpecial ? `Special Topics ${dateStr}` : dateStr;
     const div = document.createElement('div');
     div.className = 'gh-episode-item';
-    div.innerHTML = `<span class="ep-date">&#9658; ${dateStr}</span><span class="ep-actions"><button class="ep-brief-btn" data-date="${dateStr}" title="View research brief">Brief</button></span>`;
-    div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path, dateStr);
+    div.innerHTML = `<span class="ep-date">&#9658; ${label}</span><span class="ep-actions"><button class="ep-brief-btn" data-date="${dateStr}" data-special="${isSpecial}" title="View research brief">Brief</button></span>`;
+    div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path, isSpecial ? `Special Topics ${dateStr}` : dateStr);
     const briefBtn = div.querySelector('.ep-brief-btn');
-    briefBtn.onclick = (e) => { e.stopPropagation(); ghLoadBrief(dateStr); };
+    briefBtn.onclick = (e) => { e.stopPropagation(); ghLoadBrief(dateStr, isSpecial); };
     ghEpisodeList.appendChild(div);
   });
 
@@ -1589,9 +1582,10 @@ async function ghFetchEpisodes() {
   let imported = 0;
   for (const ep of episodes) {
     try {
-      const dateMatch = ep.name.match(/episode-(\d{4}-\d{2}-\d{2})/);
+      const dateMatch = ep.name.match(/(\d{4}-\d{2}-\d{2})/);
       const dateStr = dateMatch ? dateMatch[1] : ep.name;
-      const title = `Episode ${dateStr}`;
+      const isSpecial = ep.name.startsWith('special-topics-');
+      const title = isSpecial ? `Special Topics ${dateStr}` : `Episode ${dateStr}`;
       if (!existingTitles.has(title)) {
         const fileData = await ghApiFetch(`contents/${ep.path}`);
         if (fileData && fileData.content) {
@@ -1677,8 +1671,9 @@ async function ghLoadEpisode(filePath, dateStr) {
   ghSetStatus(`Loaded: Episode ${dateStr}`, 'success');
 }
 
-async function ghLoadBrief(dateStr) {
-  const briefPath = `output/research-brief-${dateStr}.txt`;
+async function ghLoadBrief(dateStr, isSpecial) {
+  const prefix = isSpecial ? 'special-topics-brief' : 'research-brief';
+  const briefPath = `output/${prefix}-${dateStr}.txt`;
   ghSetStatus('Loading brief...', '');
   const data = await ghApiFetch(`contents/${briefPath}`);
   if (!data) {
@@ -1742,9 +1737,9 @@ if (mobileOverlay) mobileOverlay.onclick = closeMobileDrawers;
 const mobStartBtn = $('#mob-start-btn');
 if (mobStartBtn) mobStartBtn.onclick = startPrompter;
 
-// ===== SERVICE WORKER REGISTRATION =====
+// ===== SERVICE WORKER =====
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW registration failed:', e));
+  navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW failed:', e));
 }
 </script>
 </body>
