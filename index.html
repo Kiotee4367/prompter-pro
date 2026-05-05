@@ -1085,6 +1085,11 @@ async function startPrompter() {
   saveCurrentScript();
 
   try {
+  // Detect cursor position in textarea BEFORE building lines
+  const cursorPos = scriptInput.selectionStart || 0;
+  const textBeforeCursor = text.substring(0, cursorPos);
+  const startLineIndex = textBeforeCursor.split('\n').length - 1;
+
   // Apply settings
   tapMode = tapCheck ? tapCheck.checked : false;
   buildLines(text);
@@ -1097,7 +1102,8 @@ async function startPrompter() {
   prompterText.style.fontFamily = fontSelect ? fontSelect.value : 'sans-serif';
   prompterText.querySelectorAll('.line').forEach(el => { el.style.lineHeight = String(ls); });
 
-  const gp = guidePos ? +guidePos.value : 33;
+  // Force guide to center (50%) for center-screen highlight
+  const gp = 50;
   guideLine.style.top = gp + '%';
 
   if (mirrorCheck) prompterView.classList.toggle('mirror', mirrorCheck.checked);
@@ -1129,11 +1135,21 @@ async function startPrompter() {
   prompterText.style.paddingBottom = endPad + 'px';
   totalHeight = prompterText.scrollHeight - containerHeight;
 
+  // Start from cursor position
   scrollPos = 0;
-  prompterText.style.top = '0px';
+  if (startLineIndex > 0) {
+    const allLines = prompterText.querySelectorAll('.line');
+    if (startLineIndex < allLines.length) {
+      const targetLine = allLines[startLineIndex];
+      const guideOffset = containerHeight * (gp / 100);
+      scrollPos = Math.max(0, Math.min(totalHeight, targetLine.offsetTop + parseFloat(prompterText.style.paddingTop) - guideOffset));
+    }
+  }
+  prompterText.style.top = -scrollPos + 'px';
   paused = false;
   running = true;
-  rampPhase = rampCheck.checked ? 0 : 1;
+  const rc = $('#ramp-check');
+  rampPhase = (rc && rc.checked) ? 0 : 1;
   sessionMarkers = [];
   pauseBtn.textContent = tapMode ? 'Tap Mode' : 'Pause';
   hudSpeed.textContent = speed + ' px/s';
