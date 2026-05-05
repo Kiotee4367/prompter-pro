@@ -170,13 +170,17 @@
   #prompter-text { position: absolute; width: 100%; transition: top 0.05s linear; }
 
   #prompter-text .line {
-    font-weight: 500; color: var(--dim); padding: 4px 0;
-    transition: color 0.3s, opacity 0.3s, transform 0.3s;
-    opacity: 0.35;
+    font-weight: 500; color: var(--dim); padding: 6px 0;
+    transition: color 0.25s, opacity 0.25s, transform 0.25s, text-shadow 0.25s;
+    opacity: 0.15;
   }
-  #prompter-text .line.current { color: var(--fg); opacity: 1; transform: scale(1); }
-  #prompter-text .line.near { opacity: 0.7; color: var(--fg); }
-  #prompter-text .line.far { opacity: 0.2; }
+  #prompter-text .line.current {
+    color: #fff; opacity: 1; font-weight: 600;
+    text-shadow: 0 0 30px #4a9eff66, 0 0 60px #4a9eff22;
+  }
+  #prompter-text .line.near-1 { opacity: 0.55; color: #ccc; }
+  #prompter-text .line.near-2 { opacity: 0.3; color: #999; }
+  #prompter-text .line.far { opacity: 0.1; }
 
   /* Cue marker styles */
   #prompter-text .line.cue-pause { border-left: 4px solid #f59e0b; padding-left: 16px; }
@@ -538,7 +542,7 @@ Blank lines create visual pauses."></textarea>
     </div>
     <div class="setting-row">
       <label>Ramp start/end</label>
-      <label class="toggle-switch"><input type="checkbox" id="ramp-check" checked><span class="toggle-track"></span></label>
+      <label class="toggle-switch"><input type="checkbox" id="ramp-check"><span class="toggle-track"></span></label>
     </div>
     <div class="setting-row">
       <label>Tap-to-advance</label>
@@ -604,8 +608,8 @@ Blank lines create visual pauses."></textarea>
       <label>Guide position</label>
       <select id="guide-pos">
         <option value="25">25%</option>
-        <option value="33" selected>33%</option>
-        <option value="50">Center</option>
+        <option value="33">33%</option>
+        <option value="50" selected>Center</option>
       </select>
     </div>
     <div class="setting-row">
@@ -1197,22 +1201,25 @@ function tick(now) {
 
 // ===== HIGHLIGHT =====
 function updateHighlight() {
-  const guideY = containerHeight * (+guidePos.value / 100);
+  const gpEl = $('#guide-pos');
+  const guideY = containerHeight * ((gpEl ? +gpEl.value : 50) / 100);
   const lines = prompterText.querySelectorAll('.line');
   const scrollTop = -(parseFloat(prompterText.style.top) || 0);
+  const padTop = parseFloat(prompterText.style.paddingTop) || 0;
+  const fontSize = parseFloat(prompterText.style.fontSize) || 42;
 
   lines.forEach(el => {
-    const elTop = el.offsetTop - scrollTop + parseFloat(prompterText.style.paddingTop);
-    const dist = Math.abs(elTop - guideY);
-    const fontSize = parseFloat(prompterText.style.fontSize);
-    el.classList.remove('current', 'near', 'far', 'past');
+    const elTop = el.offsetTop - scrollTop + padTop;
+    const elMid = elTop + el.offsetHeight / 2;
+    const dist = Math.abs(elMid - guideY);
+    el.classList.remove('current', 'near-1', 'near-2', 'far', 'past');
 
-    if (dist < fontSize * 1.2) {
+    if (dist < fontSize * 0.8) {
       el.classList.add('current');
-    } else if (elTop < guideY) {
-      el.classList.add('past');
+    } else if (dist < fontSize * 2.5) {
+      el.classList.add('near-1');
     } else if (dist < fontSize * 5) {
-      el.classList.add('near');
+      el.classList.add('near-2');
     } else {
       el.classList.add('far');
     }
