@@ -1141,8 +1141,9 @@ async function startPrompter() {
     const allLines = prompterText.querySelectorAll('.line');
     if (startLineIndex < allLines.length) {
       const targetLine = allLines[startLineIndex];
+      // offsetTop already includes paddingTop on parent
       const guideOffset = containerHeight * (gp / 100);
-      scrollPos = Math.max(0, Math.min(totalHeight, targetLine.offsetTop + parseFloat(prompterText.style.paddingTop) - guideOffset));
+      scrollPos = Math.max(0, Math.min(totalHeight, targetLine.offsetTop - guideOffset));
     }
   }
   prompterText.style.top = -scrollPos + 'px';
