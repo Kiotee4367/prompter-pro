@@ -170,17 +170,17 @@
   #prompter-text { position: absolute; width: 100%; transition: top 0.05s linear; }
 
   #prompter-text .line {
-    font-weight: 500; color: var(--dim); padding: 6px 0;
-    transition: color 0.25s, opacity 0.25s, transform 0.25s, text-shadow 0.25s;
-    opacity: 0.15;
+    font-weight: 500; padding: 6px 0;
+    transition: color 0.25s, opacity 0.25s, text-shadow 0.25s;
+    color: var(--dim); opacity: 0.15;
   }
   #prompter-text .line.current {
-    color: #fff; opacity: 1; font-weight: 600;
-    text-shadow: 0 0 30px #4a9eff66, 0 0 60px #4a9eff22;
+    color: var(--fg); opacity: 1; font-weight: 700;
+    text-shadow: 0 0 40px var(--accent), 0 0 80px var(--accent);
   }
-  #prompter-text .line.near-1 { opacity: 0.55; color: #ccc; }
-  #prompter-text .line.near-2 { opacity: 0.3; color: #999; }
-  #prompter-text .line.far { opacity: 0.1; }
+  #prompter-text .line.near-1 { opacity: 0.45; color: var(--muted); }
+  #prompter-text .line.near-2 { opacity: 0.2; color: var(--dim); }
+  #prompter-text .line.far { opacity: 0.08; color: var(--dim); }
 
   /* Cue marker styles */
   #prompter-text .line.cue-pause { border-left: 4px solid #f59e0b; padding-left: 16px; }
@@ -1217,18 +1217,15 @@ function tick(now) {
 
 // ===== HIGHLIGHT =====
 function updateHighlight() {
-  // Always highlight at center of screen (50%)
-  const guideY = containerHeight * 0.5;
+  const centerY = containerHeight * 0.5;
   const lines = prompterText.querySelectorAll('.line');
-  const scrollTop = -(parseFloat(prompterText.style.top) || 0);
-  const padTop = parseFloat(prompterText.style.paddingTop) || 0;
+  const textTop = parseFloat(prompterText.style.top) || 0;
   const fontSize = parseFloat(prompterText.style.fontSize) || 42;
 
   lines.forEach(el => {
-    const elTop = el.offsetTop - scrollTop + padTop;
-    const elMid = elTop + el.offsetHeight / 2;
-    const dist = Math.abs(elMid - guideY);
-    el.classList.remove('current', 'near-1', 'near-2', 'far', 'past');
+    const screenY = el.offsetTop + textTop + el.offsetHeight / 2;
+    const dist = Math.abs(screenY - centerY);
+    el.classList.remove('current', 'near-1', 'near-2', 'far');
 
     if (dist < fontSize * 0.8) {
       el.classList.add('current');
