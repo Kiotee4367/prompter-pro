@@ -191,7 +191,7 @@
     margin-top: 12px; padding-top: 12px;
   }
 
-  .guide-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent)44; pointer-events: none; z-index: 10; }
+  .guide-line { display: none; }
 
   /* Fade overlay top/bottom */
   .fade-top, .fade-bottom { position: absolute; left: 0; right: 0; height: 15%; pointer-events: none; z-index: 5; }
@@ -1217,8 +1217,8 @@ function tick(now) {
 
 // ===== HIGHLIGHT =====
 function updateHighlight() {
-  const gpEl = $('#guide-pos');
-  const guideY = containerHeight * ((gpEl ? +gpEl.value : 50) / 100);
+  // Always highlight at center of screen (50%)
+  const guideY = containerHeight * 0.5;
   const lines = prompterText.querySelectorAll('.line');
   const scrollTop = -(parseFloat(prompterText.style.top) || 0);
   const padTop = parseFloat(prompterText.style.paddingTop) || 0;
