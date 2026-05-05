@@ -529,15 +529,15 @@ Blank lines create visual pauses."></textarea>
     <h3>Speed</h3>
     <div class="setting-row">
       <label>Scroll speed</label>
-      <input type="range" id="speed-slider" min="10" max="200" value="60">
+      <input type="range" id="speed-slider" min="5" max="200" value="28">
       <span class="val" id="speed-val">60</span>
     </div>
     <div class="setting-row">
       <label>Presets</label>
       <div class="preset-btns">
-        <button class="preset-btn" data-speed="35">Slow</button>
-        <button class="preset-btn active" data-speed="60">Med</button>
-        <button class="preset-btn" data-speed="100">Fast</button>
+        <button class="preset-btn" data-speed="18">Slow</button>
+        <button class="preset-btn active" data-speed="28">Med</button>
+        <button class="preset-btn" data-speed="50">Fast</button>
       </div>
     </div>
     <div class="setting-row">
@@ -734,7 +734,7 @@ const hudTimer = $('#hud-timer'), hudSpeed = $('#hud-speed'), hudMode = $('#hud-
 const webcamPip = $('#webcam-pip'), webcamVideo = $('#webcam-video');
 const fadeTp = $('#fade-top'), fadeBt = $('#fade-bottom');
 
-let scrollPos = 0, speed = 60, running = false, paused = false;
+let scrollPos = 0, speed = 28, running = false, paused = false;
 let tapMode = false, raf = null, lastTime = 0;
 let totalHeight = 0, containerHeight = 0;
 let elapsedSec = 0, timerInterval = null;
@@ -1275,7 +1275,7 @@ function exitPrompter() {
 }
 
 function adjustSpeed(delta) {
-  speed = Math.max(10, Math.min(200, speed + delta));
+  speed = Math.max(5, Math.min(200, speed + delta));
   speedSlider.value = speed;
   speedVal.textContent = speed;
   hudSpeed.textContent = speed + ' px/s';
@@ -1318,8 +1318,8 @@ function exportSessionLog() {
 $('#start-btn').onclick = startPrompter;
 pauseBtn.onclick = togglePause;
 exitBtn.onclick = exitPrompter;
-$('#slower-btn').onclick = () => adjustSpeed(-10);
-$('#faster-btn').onclick = () => adjustSpeed(10);
+$('#slower-btn').onclick = () => adjustSpeed(-3);
+$('#faster-btn').onclick = () => adjustSpeed(3);
 markBtn.onclick = addMarker;
 exportBtn.onclick = exportSessionLog;
 
@@ -1333,8 +1333,8 @@ document.addEventListener('keydown', e => {
     else togglePause();
   }
   else if (e.code === 'Escape') exitPrompter();
-  else if (e.code === 'ArrowUp') { e.preventDefault(); adjustSpeed(-5); }
-  else if (e.code === 'ArrowDown') { e.preventDefault(); adjustSpeed(5); }
+  else if (e.code === 'ArrowUp') { e.preventDefault(); adjustSpeed(2); }
+  else if (e.code === 'ArrowDown') { e.preventDefault(); adjustSpeed(-2); }
   else if (e.code === 'ArrowLeft') { scrollPos = Math.max(0, scrollPos - 150); }
   else if (e.code === 'ArrowRight') { scrollPos = Math.min(totalHeight, scrollPos + 150); }
   else if (e.code === 'KeyM') addMarker();
