@@ -975,6 +975,11 @@ function hookSettingsSave() {
 }
 
 // Restore on load (wrapped to prevent init crash)
+// One-time migration: force voice pause OFF
+try {
+  const _s = JSON.parse(localStorage.getItem('prompter-settings') || '{}');
+  if (_s['voice-check']) { _s['voice-check'] = false; localStorage.setItem('prompter-settings', JSON.stringify(_s)); }
+} catch(e) {}
 try { restoreAllSettings(); } catch(e) { console.warn('Settings restore failed:', e); }
 try { hookSettingsSave(); } catch(e) { console.warn('Settings hook failed:', e); }
 
@@ -1018,7 +1023,8 @@ function buildLines(text) {
     const trimmed = raw.trim();
     if (trimmed === '') {
       div.innerHTML = '&nbsp;';
-    } else if (trimmed.startsWith('#')) {
+    } else if (/^#+\s+\S/.test(trimmed)) {
+      // Section header: # followed by space then content (not hashtags like #AI #Startups)
       div.textContent = trimmed.replace(/^#+\s*/, '');
       div.classList.add('section-break');
     } else {
@@ -1135,6 +1141,10 @@ async function startPrompter() {
   prompterText.style.paddingBottom = endPad + 'px';
   totalHeight = prompterText.scrollHeight - containerHeight;
 
+  // Reset overlays
+  hideEndOfScript();
+  hidePauseOverlay();
+
   // Start from cursor position
   scrollPos = 0;
   if (startLineIndex > 0) {
@@ -1202,7 +1212,10 @@ function tick(now) {
       }
 
       scrollPos += effectiveSpeed * dt;
-      if (scrollPos > totalHeight) scrollPos = totalHeight;
+      if (scrollPos >= totalHeight) {
+        scrollPos = totalHeight;
+        showEndOfScript();
+      }
       prompterText.style.top = -scrollPos + 'px';
       if (totalHeight > 0) {
         progressBar.style.width = ((scrollPos / totalHeight) * 100) + '%';
@@ -1261,7 +1274,13 @@ function togglePause() {
   if (tapMode) return;
   paused = !paused;
   pauseBtn.textContent = paused ? 'Resume' : 'Pause';
-  if (!paused) lastTime = performance.now();
+  if (!paused) {
+    lastTime = performance.now();
+    wasPausedByVoice = false;
+    hidePauseOverlay();
+  } else {
+    showPauseOverlay();
+  }
 }
 
 function exitPrompter() {
@@ -1438,81 +1457,129 @@ function stopVoiceDetection() {
   }
 }
 
+let voicePauseCount = 0;
+let voicePauseFirstTime = 0;
+
 function voiceMonitorLoop() {
   if (!voiceActive || !running) return;
 
-  const bufferLength = analyser.frequencyBinCount;
-  const data = new Uint8Array(bufferLength);
-  analyser.getByteFrequencyData(data);
+  try {
+    const bufferLength = analyser.frequencyBinCount;
+    const data = new Uint8Array(bufferLength);
+    analyser.getByteFrequencyData(data);
 
-  // Calculate RMS volume level
-  let sum = 0;
-  for (let i = 0; i < bufferLength; i++) sum += data[i] * data[i];
-  const rms = Math.sqrt(sum / bufferLength);
-  const level = Math.min(100, rms * 1.5);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += data[i] * data[i];
+    const rms = Math.sqrt(sum / bufferLength);
+    const level = Math.min(100, rms * 1.5);
 
-  // Read threshold/delay from DOM directly (safe regardless of declaration order)
-  const threshEl = $('#voice-threshold');
-  const delayEl = $('#voice-delay');
-  const threshold = threshEl ? +threshEl.value : 15;
-  const delaySeconds = delayEl ? +delayEl.value : 1.5;
-  const isSpeaking = rms > threshold;
+    const threshEl = $('#voice-threshold');
+    const delayEl = $('#voice-delay');
+    const threshold = threshEl ? +threshEl.value : 15;
+    const delaySeconds = delayEl ? +delayEl.value : 1.5;
+    const isSpeaking = rms > threshold;
 
-  // Update visual meter
-  const meterFill = $('#voice-meter-fill');
-  const dot = $('#mic-dot');
-  const label = $('#voice-label');
-  const indicator = $('#voice-indicator');
-  if (meterFill) meterFill.style.width = level + '%';
+    const meterFill = $('#voice-meter-fill');
+    const dot = $('#mic-dot');
+    const label = $('#voice-label');
+    const indicator = $('#voice-indicator');
+    if (meterFill) meterFill.style.width = level + '%';
 
-  const inGrace = performance.now() < voiceGraceUntil;
+    const inGrace = performance.now() < voiceGraceUntil;
 
-  if (isSpeaking) {
-    // Speaking detected — mark that user has spoken, reset silence
-    voiceHasSpoken = true;
-    silenceStart = null;
-    if (dot) dot.className = 'mic-dot speaking';
-    if (meterFill) { meterFill.className = ''; meterFill.id = 'voice-meter-fill'; }
-    if (label) label.textContent = 'Speaking';
-    if (indicator) { indicator.classList.remove('silent'); indicator.classList.add('active', 'speaking'); }
+    if (isSpeaking) {
+      voiceHasSpoken = true;
+      silenceStart = null;
+      if (dot) dot.className = 'mic-dot speaking';
+      if (meterFill) { meterFill.className = ''; meterFill.id = 'voice-meter-fill'; }
+      if (label) label.textContent = 'Speaking';
+      if (indicator) { indicator.classList.remove('silent'); indicator.classList.add('active', 'speaking'); }
 
-    // Resume if we had auto-paused due to silence
-    if (wasPausedByVoice && paused) {
-      paused = false;
-      pauseBtn.textContent = tapMode ? 'Tap Mode' : 'Pause';
-      lastTime = performance.now();
-      wasPausedByVoice = false;
-    }
-  } else {
-    // Silence detected
-    if (dot) dot.className = 'mic-dot silent';
-    if (meterFill) { meterFill.className = 'silent'; meterFill.id = 'voice-meter-fill'; }
-    if (indicator) { indicator.classList.remove('speaking'); indicator.classList.add('active', 'silent'); }
-
-    // Don't start counting silence until: grace period is over AND user has spoken at least once
-    if (inGrace) {
-      if (label) label.textContent = 'Warming up...';
-    } else if (!voiceHasSpoken) {
-      if (label) label.textContent = 'Waiting for voice...';
+      if (wasPausedByVoice && paused) {
+        paused = false;
+        pauseBtn.textContent = tapMode ? 'Tap Mode' : 'Pause';
+        lastTime = performance.now();
+        wasPausedByVoice = false;
+        hidePauseOverlay();
+      }
     } else {
-      // Normal silence tracking
-      if (!silenceStart) {
-        silenceStart = performance.now();
-      }
-      const silenceDuration = (performance.now() - silenceStart) / 1000;
-      if (label) label.textContent = `Silent ${silenceDuration.toFixed(1)}s`;
+      if (dot) dot.className = 'mic-dot silent';
+      if (meterFill) { meterFill.className = 'silent'; meterFill.id = 'voice-meter-fill'; }
+      if (indicator) { indicator.classList.remove('speaking'); indicator.classList.add('active', 'silent'); }
 
-      // Auto-pause after the delay
-      if (silenceDuration >= delaySeconds && !paused && !tapMode) {
-        paused = true;
-        pauseBtn.textContent = 'Resume';
-        wasPausedByVoice = true;
-        if (label) label.textContent = 'Paused (silent)';
+      if (inGrace) {
+        if (label) label.textContent = 'Warming up...';
+      } else if (!voiceHasSpoken) {
+        if (label) label.textContent = 'Waiting for voice...';
+      } else {
+        if (!silenceStart) silenceStart = performance.now();
+        const silenceDuration = (performance.now() - silenceStart) / 1000;
+        if (label) label.textContent = `Silent ${silenceDuration.toFixed(1)}s`;
+
+        if (silenceDuration >= delaySeconds && !paused && !tapMode) {
+          paused = true;
+          pauseBtn.textContent = 'Resume';
+          wasPausedByVoice = true;
+          if (label) label.textContent = 'Paused (silent)';
+          showPauseOverlay();
+
+          const now = performance.now();
+          if (voicePauseCount === 0) voicePauseFirstTime = now;
+          voicePauseCount++;
+          if (voicePauseCount >= 3 && (now - voicePauseFirstTime) < 30000) {
+            console.warn('Voice pause auto-disabled');
+            stopVoiceDetection();
+            voiceCheck.checked = false;
+            if (paused && wasPausedByVoice) {
+              paused = false;
+              pauseBtn.textContent = tapMode ? 'Tap Mode' : 'Pause';
+              lastTime = performance.now();
+              wasPausedByVoice = false;
+              hidePauseOverlay();
+            }
+          }
+        }
       }
     }
+  } catch (e) {
+    console.warn('Voice loop error (continuing):', e);
   }
 
   voiceRaf = requestAnimationFrame(voiceMonitorLoop);
+}
+
+function showPauseOverlay() {
+  let ov = $('#pause-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'pause-overlay';
+    ov.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#f59e0bdd;color:#000;font-size:24px;font-weight:700;padding:16px 32px;border-radius:12px;z-index:90;pointer-events:none;letter-spacing:1px;';
+    ov.textContent = 'PAUSED';
+    document.body.appendChild(ov);
+  } else { ov.style.display = 'block'; }
+}
+function hidePauseOverlay() {
+  const ov = $('#pause-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+let endShown = false;
+function showEndOfScript() {
+  if (endShown) return;
+  endShown = true;
+  let ov = $('#end-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'end-overlay';
+    ov.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#22c55edd;color:#000;font-size:32px;font-weight:700;padding:24px 48px;border-radius:14px;z-index:90;letter-spacing:1px;text-align:center;box-shadow:0 8px 40px #0006;';
+    ov.innerHTML = 'END OF SCRIPT<br><span style="font-size:14px;font-weight:500;display:block;margin-top:8px;">Press Esc to exit</span>';
+    document.body.appendChild(ov);
+  } else { ov.style.display = 'block'; }
+}
+function hideEndOfScript() {
+  endShown = false;
+  const ov = $('#end-overlay');
+  if (ov) ov.style.display = 'none';
 }
 
 // Toggle voice with V key (handled in keydown below)
