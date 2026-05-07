@@ -1112,9 +1112,15 @@ async function startPrompter() {
 
   try {
   // Detect cursor position in textarea BEFORE building lines
+  // Only honor cursor if user explicitly placed it in the middle (not at start, not at/near end)
   const cursorPos = scriptInput.selectionStart || 0;
-  const textBeforeCursor = text.substring(0, cursorPos);
-  const startLineIndex = textBeforeCursor.split('\n').length - 1;
+  const cursorAtEnd = cursorPos >= text.length - 50;
+  const cursorAtStart = cursorPos < 20;
+  let startLineIndex = 0;
+  if (!cursorAtEnd && !cursorAtStart) {
+    const textBeforeCursor = text.substring(0, cursorPos);
+    startLineIndex = textBeforeCursor.split('\n').length - 1;
+  }
 
   // Apply settings
   tapMode = tapCheck ? tapCheck.checked : false;
@@ -1305,10 +1311,13 @@ function togglePause() {
 
 function exitPrompter() {
   running = false;
+  paused = false;
   if (raf) cancelAnimationFrame(raf);
   if (timerInterval) clearInterval(timerInterval);
   stopWebcam();
   stopVoiceDetection();
+  hideEndOfScript();
+  hidePauseOverlay();
   prompterView.style.display = 'none';
   editorView.style.display = 'flex';
   if (document.fullscreenElement) document.exitFullscreen();
