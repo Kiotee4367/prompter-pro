@@ -178,9 +178,14 @@
     color: var(--fg); opacity: 1; font-weight: 700;
     text-shadow: 0 0 40px var(--accent), 0 0 80px var(--accent);
   }
-  #prompter-text .line.near-1 { opacity: 0.85; color: var(--fg); }
-  #prompter-text .line.near-2 { opacity: 0.65; color: var(--fg); }
-  #prompter-text .line.far { opacity: 0.4; color: var(--fg); }
+  /* Upcoming lines (below current) — bright so host can read ahead */
+  #prompter-text .line.upcoming.near-1 { opacity: 0.95; color: var(--fg); }
+  #prompter-text .line.upcoming.near-2 { opacity: 0.85; color: var(--fg); }
+  #prompter-text .line.upcoming.far     { opacity: 0.65; color: var(--fg); }
+  /* Past lines (above current) — fade more aggressively */
+  #prompter-text .line.past.near-1 { opacity: 0.55; color: var(--fg); }
+  #prompter-text .line.past.near-2 { opacity: 0.3;  color: var(--fg); }
+  #prompter-text .line.past.far    { opacity: 0.15; color: var(--fg); }
 
   /* Cue marker styles */
   #prompter-text .line.cue-pause { border-left: 4px solid #f59e0b; padding-left: 16px; }
@@ -1280,17 +1285,21 @@ function updateHighlight() {
 
   lines.forEach(el => {
     const screenY = el.offsetTop + textTop + el.offsetHeight / 2;
-    const dist = Math.abs(screenY - centerY);
-    el.classList.remove('current', 'near-1', 'near-2', 'far');
+    const signedDist = screenY - centerY; // negative = past, positive = upcoming
+    const dist = Math.abs(signedDist);
+    el.classList.remove('current', 'near-1', 'near-2', 'far', 'past', 'upcoming');
 
     if (dist < fontSize * 0.8) {
       el.classList.add('current');
     } else if (dist < fontSize * 2.5) {
       el.classList.add('near-1');
+      el.classList.add(signedDist < 0 ? 'past' : 'upcoming');
     } else if (dist < fontSize * 5) {
       el.classList.add('near-2');
+      el.classList.add(signedDist < 0 ? 'past' : 'upcoming');
     } else {
       el.classList.add('far');
+      el.classList.add(signedDist < 0 ? 'past' : 'upcoming');
     }
   });
 }
