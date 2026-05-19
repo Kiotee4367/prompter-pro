@@ -172,15 +172,15 @@
   #prompter-text .line {
     font-weight: 500; padding: 6px 0;
     transition: color 0.25s, opacity 0.25s, text-shadow 0.25s;
-    color: var(--dim); opacity: 0.15;
+    color: var(--fg); opacity: 0.55;
   }
   #prompter-text .line.current {
     color: var(--fg); opacity: 1; font-weight: 700;
     text-shadow: 0 0 40px var(--accent), 0 0 80px var(--accent);
   }
-  #prompter-text .line.near-1 { opacity: 0.45; color: var(--muted); }
-  #prompter-text .line.near-2 { opacity: 0.2; color: var(--dim); }
-  #prompter-text .line.far { opacity: 0.08; color: var(--dim); }
+  #prompter-text .line.near-1 { opacity: 0.85; color: var(--fg); }
+  #prompter-text .line.near-2 { opacity: 0.65; color: var(--fg); }
+  #prompter-text .line.far { opacity: 0.4; color: var(--fg); }
 
   /* Cue marker styles */
   #prompter-text .line.cue-pause { border-left: 4px solid #f59e0b; padding-left: 16px; }
