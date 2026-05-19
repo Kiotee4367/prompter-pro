@@ -441,6 +441,22 @@ window.onerror = function(msg, url, line, col, err) {
       <div class="gh-status" id="gh-status"></div>
       <div id="gh-episode-list"></div>
 
+      <!-- Submit Topic Show -->
+      <div style="padding: 8px 12px; border-top: 1px solid var(--border); margin-top: 8px;">
+        <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">On-Demand Topic Show</div>
+        <input type="text" id="topic-title-input" placeholder="Topic (e.g. Claude Design)"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
+        <input type="text" id="topic-url-input" placeholder="Reference URL (optional)"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
+        <input type="text" id="topic-notes-input" placeholder="Angle / notes (optional)"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
+        <button id="submit-topic-btn"
+                style="width:100%; padding:7px 10px; background:#8b5cf622; color:#8b5cf6; border:1px solid #8b5cf644; border-radius:5px; font-size:12px; cursor:pointer; font-weight:500;">
+          &#128221; Generate Topic Show
+        </button>
+        <div id="topic-status" style="font-size:11px; color:var(--muted); margin-top:4px; text-align:center;"></div>
+      </div>
+
       <!-- Performance Review Quick Links -->
       <div style="padding: 8px 12px; border-top: 1px solid var(--border); margin-top: 8px;">
         <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Performance Review</div>
@@ -1670,7 +1686,7 @@ async function ghFetchEpisodes() {
 
   // Filter episode files and sort newest first
   const episodes = data
-    .filter(f => (f.name.startsWith('episode-') || f.name.startsWith('special-topics-episode-')) && f.name.endsWith('.txt'))
+    .filter(f => (f.name.startsWith('episode-') || f.name.startsWith('special-topics-episode-') || f.name.startsWith('topic-episode-')) && f.name.endsWith('.txt'))
     .sort((a, b) => b.name.localeCompare(a.name));
 
   if (episodes.length === 0) {
@@ -1684,13 +1700,28 @@ async function ghFetchEpisodes() {
     const dateMatch = ep.name.match(/(\d{4}-\d{2}-\d{2})/);
     const dateStr = dateMatch ? dateMatch[1] : ep.name;
     const isSpecial = ep.name.startsWith('special-topics-');
-    const label = isSpecial ? `Special Topics ${dateStr}` : dateStr;
+    const isTopic = ep.name.startsWith('topic-episode-');
+    let topicSlug = '';
+    if (isTopic) {
+      const m = ep.name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
+      if (m) topicSlug = m[1].replace(/-/g, ' ');
+    }
+    let label;
+    if (isTopic) label = `▼ ${topicSlug} (${dateStr})`;
+    else if (isSpecial) label = `Special Topics ${dateStr}`;
+    else label = dateStr;
+
     const div = document.createElement('div');
     div.className = 'gh-episode-item';
-    div.innerHTML = `<span class="ep-date">&#9658; ${label}</span><span class="ep-actions"><button class="ep-brief-btn" data-date="${dateStr}" data-special="${isSpecial}" title="View research brief">Brief</button></span>`;
-    div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path, isSpecial ? `Special Topics ${dateStr}` : dateStr);
+    div.innerHTML = `<span class="ep-date">&#9658; ${label}</span><span class="ep-actions"><button class="ep-brief-btn" title="View research brief">Brief</button></span>`;
+    const slotTitle = isTopic ? `Topic: ${topicSlug}` : (isSpecial ? `Special Topics ${dateStr}` : dateStr);
+    div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path, slotTitle);
     const briefBtn = div.querySelector('.ep-brief-btn');
-    briefBtn.onclick = (e) => { e.stopPropagation(); ghLoadBrief(dateStr, isSpecial); };
+    briefBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (isTopic) ghLoadTopicBrief(dateStr, ep.name.replace('topic-episode-', '').replace('.txt', ''));
+      else ghLoadBrief(dateStr, isSpecial);
+    };
     ghEpisodeList.appendChild(div);
   });
 
@@ -1702,7 +1733,17 @@ async function ghFetchEpisodes() {
       const dateMatch = ep.name.match(/(\d{4}-\d{2}-\d{2})/);
       const dateStr = dateMatch ? dateMatch[1] : ep.name;
       const isSpecial = ep.name.startsWith('special-topics-');
-      const title = isSpecial ? `Special Topics ${dateStr}` : `Episode ${dateStr}`;
+      const isTopic = ep.name.startsWith('topic-episode-');
+      let title;
+      if (isTopic) {
+        const m = ep.name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
+        const slugReadable = m ? m[1].replace(/-/g, ' ') : ep.name;
+        title = `Topic: ${slugReadable} (${dateStr})`;
+      } else if (isSpecial) {
+        title = `Special Topics ${dateStr}`;
+      } else {
+        title = `Episode ${dateStr}`;
+      }
       if (!existingTitles.has(title)) {
         const fileData = await ghApiFetch(`contents/${ep.path}`);
         if (fileData && fileData.content) {
@@ -1788,6 +1829,27 @@ async function ghLoadEpisode(filePath, dateStr) {
   ghSetStatus(`Loaded: Episode ${dateStr}`, 'success');
 }
 
+async function ghLoadTopicBrief(dateStr, dateSlug) {
+  const briefPath = `output/topic-brief-${dateSlug}.txt`;
+  ghSetStatus('Loading brief...', '');
+  const data = await ghApiFetch(`contents/${briefPath}`);
+  if (!data) {
+    ghSetStatus('No topic brief found', 'error');
+    return;
+  }
+  let text;
+  try {
+    const rawText = atob(data.content.replace(/\n/g, ''));
+    text = decodeURIComponent(escape(rawText));
+  } catch (e) {
+    text = atob(data.content.replace(/\n/g, ''));
+  }
+  $('#brief-title').textContent = `Topic Brief - ${dateSlug.replace(/-/g, ' ')}`;
+  $('#brief-content').textContent = text;
+  $('#brief-modal').classList.add('visible');
+  ghSetStatus('', '');
+}
+
 async function ghLoadBrief(dateStr, isSpecial) {
   const prefix = isSpecial ? 'special-topics-brief' : 'research-brief';
   const briefPath = `output/${prefix}-${dateStr}.txt`;
@@ -1828,6 +1890,61 @@ ghClearBtn.onclick = () => {
 if (savedPat && savedRepo) {
   setTimeout(() => { ghFetchEpisodes().catch(e => console.warn('Auto-fetch failed:', e)); }, 500);
 }
+
+// ===== SUBMIT TOPIC SHOW =====
+async function submitTopicShow() {
+  const topic = $('#topic-title-input').value.trim();
+  const url = $('#topic-url-input').value.trim();
+  const notes = $('#topic-notes-input').value.trim();
+  const statusEl = $('#topic-status');
+
+  if (!topic) {
+    statusEl.textContent = 'Enter a topic first';
+    statusEl.style.color = '#ef4444';
+    return;
+  }
+  const pat = ghPatInput.value.trim();
+  const repo = ghRepoInput.value.trim();
+  if (!pat || !repo) {
+    statusEl.textContent = 'Need GitHub PAT + repo above';
+    statusEl.style.color = '#ef4444';
+    return;
+  }
+
+  statusEl.textContent = 'Submitting...';
+  statusEl.style.color = 'var(--muted)';
+
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/topic-show.yml/dispatches`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${pat}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ref: 'main',
+        inputs: { topic, context_url: url, context_notes: notes }
+      })
+    });
+    if (resp.status === 204) {
+      statusEl.textContent = '✓ Submitted! Check email in 3-5 min';
+      statusEl.style.color = '#22c55e';
+      $('#topic-title-input').value = '';
+      $('#topic-url-input').value = '';
+      $('#topic-notes-input').value = '';
+    } else {
+      const err = await resp.text();
+      statusEl.textContent = `Error ${resp.status}: ${err.substring(0, 60)}`;
+      statusEl.style.color = '#ef4444';
+    }
+  } catch (e) {
+    statusEl.textContent = `Failed: ${e.message}`;
+    statusEl.style.color = '#ef4444';
+  }
+}
+const submitTopicBtn = $('#submit-topic-btn');
+if (submitTopicBtn) submitTopicBtn.onclick = submitTopicShow;
 
 // ===== MOBILE NAV =====
 const mobScriptsBtn = $('#mob-scripts-btn');
