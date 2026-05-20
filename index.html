@@ -446,6 +446,22 @@ window.onerror = function(msg, url, line, col, err) {
       <div class="gh-status" id="gh-status"></div>
       <div id="gh-episode-list"></div>
 
+      <!-- Manual Episode Triggers -->
+      <div style="padding: 8px 12px; border-top: 1px solid var(--border); margin-top: 8px;">
+        <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Generate Scheduled Episode</div>
+        <div style="display:flex; gap:4px;">
+          <button id="gen-monday-btn"
+                  style="flex:1; padding:7px 8px; background:#4a9eff22; color:var(--accent); border:1px solid #4a9eff44; border-radius:5px; font-size:12px; cursor:pointer; font-weight:500;">
+            Monday Show
+          </button>
+          <button id="gen-wednesday-btn"
+                  style="flex:1; padding:7px 8px; background:#4a9eff22; color:var(--accent); border:1px solid #4a9eff44; border-radius:5px; font-size:12px; cursor:pointer; font-weight:500;">
+            Wednesday Show
+          </button>
+        </div>
+        <div id="gen-status" style="font-size:11px; color:var(--muted); margin-top:4px; text-align:center;"></div>
+      </div>
+
       <!-- Submit Topic Show -->
       <div style="padding: 8px 12px; border-top: 1px solid var(--border); margin-top: 8px;">
         <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">On-Demand Topic Show</div>
@@ -1954,6 +1970,47 @@ async function submitTopicShow() {
 }
 const submitTopicBtn = $('#submit-topic-btn');
 if (submitTopicBtn) submitTopicBtn.onclick = submitTopicShow;
+
+// ===== MANUAL EPISODE TRIGGERS =====
+async function dispatchWorkflow(workflowFile, label) {
+  const genStatus = $('#gen-status');
+  const pat = ghPatInput.value.trim();
+  const repo = ghRepoInput.value.trim();
+  if (!pat || !repo) {
+    genStatus.textContent = 'Need GitHub PAT + repo above';
+    genStatus.style.color = '#ef4444';
+    return;
+  }
+  genStatus.textContent = `Starting ${label}...`;
+  genStatus.style.color = 'var(--muted)';
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFile}/dispatches`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${pat}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ref: 'main' })
+    });
+    if (resp.status === 204) {
+      genStatus.textContent = `✓ ${label} generating! Check email in 3-5 min`;
+      genStatus.style.color = '#22c55e';
+    } else {
+      const err = await resp.text();
+      genStatus.textContent = `Error ${resp.status}: ${err.substring(0, 50)}`;
+      genStatus.style.color = '#ef4444';
+    }
+  } catch (e) {
+    genStatus.textContent = `Failed: ${e.message}`;
+    genStatus.style.color = '#ef4444';
+  }
+}
+
+const genMondayBtn = $('#gen-monday-btn');
+const genWednesdayBtn = $('#gen-wednesday-btn');
+if (genMondayBtn) genMondayBtn.onclick = () => dispatchWorkflow('weekly-script.yml', 'Monday show');
+if (genWednesdayBtn) genWednesdayBtn.onclick = () => dispatchWorkflow('wednesday-script.yml', 'Wednesday show');
 
 // ===== MOBILE NAV =====
 const mobScriptsBtn = $('#mob-scripts-btn');
