@@ -1732,14 +1732,19 @@ async function ghFetchEpisodes() {
       const m = ep.name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
       if (m) topicSlug = m[1].replace(/-/g, ' ');
     }
-    let label;
-    if (isTopic) label = `▼ ${topicSlug} (${dateStr})`;
-    else if (isSpecial) label = `Special Topics ${dateStr}`;
-    else label = dateStr;
+    // Title-case the topic slug for clean display
+    const niceTopic = topicSlug.replace(/\b\w/g, c => c.toUpperCase());
+    let label, tag, tagColor;
+    if (isTopic) { label = niceTopic; tag = dateStr; tagColor = '#8b5cf6'; }
+    else if (isSpecial) { label = 'Special Topics'; tag = dateStr; tagColor = '#f59e0b'; }
+    else { label = 'Weekly Episode'; tag = dateStr; tagColor = 'var(--accent)'; }
 
     const div = document.createElement('div');
     div.className = 'gh-episode-item';
-    div.innerHTML = `<span class="ep-date">&#9658; ${label}</span><span class="ep-actions"><button class="ep-brief-btn" title="View research brief">Brief</button></span>`;
+    div.innerHTML = `<span class="ep-date" style="display:flex;flex-direction:column;gap:2px;">
+        <span style="font-weight:500;">${label}</span>
+        <span style="font-size:10px;color:${tagColor};">${tag}</span>
+      </span><span class="ep-actions"><button class="ep-brief-btn" title="View research brief">Brief</button></span>`;
     const slotTitle = isTopic ? `Topic: ${topicSlug}` : (isSpecial ? `Special Topics ${dateStr}` : dateStr);
     div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path, slotTitle);
     const briefBtn = div.querySelector('.ep-brief-btn');
