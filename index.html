@@ -479,18 +479,20 @@ window.onerror = function(msg, url, line, col, err) {
         <div id="topic-status" style="font-size:11px; color:var(--muted); margin-top:4px; text-align:center;"></div>
       </div>
 
-      <!-- Performance Review Quick Links -->
+      <!-- Performance Review -->
       <div style="padding: 8px 12px; border-top: 1px solid var(--border); margin-top: 8px;">
         <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Performance Review</div>
-        <a href="https://github.com/Kiotee4367/podcast-script-generator/actions/workflows/episode-review.yml" target="_blank" rel="noopener"
-           style="display:block; padding:6px 10px; background:#22c55e22; color:#22c55e; border:1px solid #22c55e44; border-radius:5px; font-size:12px; text-decoration:none; margin-bottom:4px; text-align:center; font-weight:500;">
+        <input type="text" id="review-url-input" placeholder="YouTube / audio URL (blank = latest recording)"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
+        <input type="text" id="review-date-input" placeholder="Episode date YYYY-MM-DD (blank = today)"
+               style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
+        <button id="submit-review-btn"
+                style="width:100%; padding:7px 10px; background:#22c55e22; color:#22c55e; border:1px solid #22c55e44; border-radius:5px; font-size:12px; cursor:pointer; font-weight:500;">
           &#9658; Submit Episode for Review
-        </a>
-        <div style="font-size:10px; color:var(--muted); text-align:center; margin-bottom:6px; line-height:1.3;">
-          Click "Run workflow" &rarr; paste YouTube link
-        </div>
+        </button>
+        <div id="review-status" style="font-size:11px; color:var(--muted); margin-top:4px; text-align:center;"></div>
         <a href="https://github.com/Kiotee4367/podcast-script-generator/tree/main/output" target="_blank" rel="noopener"
-           style="display:block; padding:6px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:5px; font-size:12px; text-decoration:none; margin-bottom:4px; text-align:center;">
+           style="display:block; padding:6px 10px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:5px; font-size:12px; text-decoration:none; margin-top:6px; margin-bottom:4px; text-align:center;">
           &#128203; View Reviews & Transcripts
         </a>
         <a href="https://github.com/Kiotee4367/podcast-script-generator/actions" target="_blank" rel="noopener"
@@ -1922,6 +1924,60 @@ if (savedPat && savedRepo) {
   setTimeout(() => { ghFetchEpisodes().catch(e => console.warn('Auto-fetch failed:', e)); }, 500);
 }
 
+// ===== SHARED: COMMIT A REQUEST FILE =====
+// Commits a JSON request file to podcast-script-generator via the GitHub
+// Contents API on `main`. A matching `on: push` trigger in that repo picks the
+// file up and runs the job. This only needs the "Contents: write" permission
+// the app already uses to read the private repo — no "Actions: write" required —
+// so it never hits the 403 "Resource not accessible by personal access token"
+// that the workflow_dispatch API kept regressing on. Returns true on success.
+async function commitRequest(path, payloadObject, commitMessage, statusEl) {
+  const pat = ghPatInput.value.trim();
+  const repo = ghRepoInput.value.trim();
+  if (!pat || !repo) {
+    if (statusEl) { statusEl.textContent = 'Need GitHub PAT + repo above'; statusEl.style.color = '#ef4444'; }
+    return false;
+  }
+  if (statusEl) { statusEl.textContent = 'Submitting...'; statusEl.style.color = 'var(--muted)'; }
+
+  // base64-encode the JSON payload, UTF-8 safe.
+  const content = btoa(unescape(encodeURIComponent(JSON.stringify(payloadObject, null, 2))));
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${pat}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message: commitMessage, content, branch: 'main' })
+    });
+    if (resp.ok) {
+      if (statusEl) {
+        statusEl.textContent = '✓ Request submitted! Results will appear in the GitHub Episodes / Reviews panel shortly.';
+        statusEl.style.color = '#22c55e';
+      }
+      return true;
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      if (statusEl) {
+        statusEl.textContent = "Your GitHub token needs 'Contents: write' on podcast-script-generator";
+        statusEl.style.color = '#ef4444';
+      }
+      return false;
+    }
+    const err = await resp.text();
+    if (statusEl) {
+      statusEl.textContent = `Could not submit request: ${err.substring(0, 60)}`;
+      statusEl.style.color = '#ef4444';
+    }
+    return false;
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = `Failed: ${e.message}`; statusEl.style.color = '#ef4444'; }
+    return false;
+  }
+}
+
 // ===== SUBMIT TOPIC SHOW =====
 async function submitTopicShow() {
   const topic = $('#topic-title-input').value.trim();
@@ -1934,107 +1990,69 @@ async function submitTopicShow() {
     statusEl.style.color = '#ef4444';
     return;
   }
-  const pat = ghPatInput.value.trim();
-  const repo = ghRepoInput.value.trim();
-  if (!pat || !repo) {
-    statusEl.textContent = 'Need GitHub PAT + repo above';
-    statusEl.style.color = '#ef4444';
-    return;
-  }
 
-  statusEl.textContent = 'Submitting...';
-  statusEl.style.color = 'var(--muted)';
-
-  // Commit a request file via the Contents API. A matching `on: push` trigger
-  // in topic-show.yml picks it up and runs the generation. This only needs the
-  // "Contents: write" permission the app already uses to read private scripts —
-  // no "Actions: write" required.
-  const requestPath = `requests/topic-show-${Date.now()}.json`;
-  const payload = {
-    topic,
-    context_url: url,
-    context_notes: notes,
-    requested_at: new Date().toISOString()
-  };
-  // base64-encode the JSON, UTF-8 safe.
-  const content = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
-
-  try {
-    const resp = await fetch(`https://api.github.com/repos/${repo}/contents/${requestPath}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${pat}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        message: `Topic show request: ${topic}`,
-        content,
-        branch: 'main'
-      })
-    });
-    if (resp.ok) {
-      statusEl.textContent = '✓ Request submitted! Episode will appear in the GitHub Episodes panel shortly.';
-      statusEl.style.color = '#22c55e';
-      $('#topic-title-input').value = '';
-      $('#topic-url-input').value = '';
-      $('#topic-notes-input').value = '';
-    } else if (resp.status === 401 || resp.status === 403) {
-      statusEl.textContent = "Your GitHub token needs 'Contents: write' on podcast-script-generator";
-      statusEl.style.color = '#ef4444';
-    } else {
-      const err = await resp.text();
-      statusEl.textContent = `Error ${resp.status}: ${err.substring(0, 60)}`;
-      statusEl.style.color = '#ef4444';
-    }
-  } catch (e) {
-    statusEl.textContent = `Failed: ${e.message}`;
-    statusEl.style.color = '#ef4444';
+  const ok = await commitRequest(
+    `requests/topic-show-${Date.now()}.json`,
+    {
+      topic,
+      context_url: url,
+      context_notes: notes,
+      requested_at: new Date().toISOString()
+    },
+    `Topic show request: ${topic}`,
+    statusEl
+  );
+  if (ok) {
+    $('#topic-title-input').value = '';
+    $('#topic-url-input').value = '';
+    $('#topic-notes-input').value = '';
   }
 }
 const submitTopicBtn = $('#submit-topic-btn');
 if (submitTopicBtn) submitTopicBtn.onclick = submitTopicShow;
 
+// ===== SUBMIT EPISODE FOR REVIEW =====
+async function submitEpisodeReview() {
+  const audioUrl = $('#review-url-input').value.trim();
+  const episodeDate = $('#review-date-input').value.trim();
+  const statusEl = $('#review-status');
+
+  const ok = await commitRequest(
+    `requests/episode-review-${Date.now()}.json`,
+    {
+      audio_url: audioUrl,
+      episode_date: episodeDate,
+      requested_at: new Date().toISOString()
+    },
+    `Episode review request: ${audioUrl || 'latest recording'}`,
+    statusEl
+  );
+  if (ok) {
+    $('#review-url-input').value = '';
+    $('#review-date-input').value = '';
+  }
+}
+const submitReviewBtn = $('#submit-review-btn');
+if (submitReviewBtn) submitReviewBtn.onclick = submitEpisodeReview;
+
 // ===== MANUAL EPISODE TRIGGERS =====
-async function dispatchWorkflow(workflowFile, label) {
-  const genStatus = $('#gen-status');
-  const pat = ghPatInput.value.trim();
-  const repo = ghRepoInput.value.trim();
-  if (!pat || !repo) {
-    genStatus.textContent = 'Need GitHub PAT + repo above';
-    genStatus.style.color = '#ef4444';
-    return;
-  }
-  genStatus.textContent = `Starting ${label}...`;
-  genStatus.style.color = 'var(--muted)';
-  try {
-    const resp = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFile}/dispatches`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `token ${pat}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ ref: 'main' })
-    });
-    if (resp.status === 204) {
-      genStatus.textContent = `✓ ${label} generating! Check email in 3-5 min`;
-      genStatus.style.color = '#22c55e';
-    } else {
-      const err = await resp.text();
-      genStatus.textContent = `Error ${resp.status}: ${err.substring(0, 50)}`;
-      genStatus.style.color = '#ef4444';
-    }
-  } catch (e) {
-    genStatus.textContent = `Failed: ${e.message}`;
-    genStatus.style.color = '#ef4444';
-  }
+// Commit a request file via the Contents API (Contents: write) instead of
+// dispatching the workflow (Actions: write), so these buttons never hit the
+// same 403 either. The paired workflows in podcast-script-generator trigger on
+// `on: push` to requests/<show>-show-*.json.
+async function requestScheduledShow(show, label) {
+  await commitRequest(
+    `requests/${show}-show-${Date.now()}.json`,
+    { show, requested_at: new Date().toISOString() },
+    `${label} request`,
+    $('#gen-status')
+  );
 }
 
 const genMondayBtn = $('#gen-monday-btn');
 const genWednesdayBtn = $('#gen-wednesday-btn');
-if (genMondayBtn) genMondayBtn.onclick = () => dispatchWorkflow('monday-script.yml', 'Monday show');
-if (genWednesdayBtn) genWednesdayBtn.onclick = () => dispatchWorkflow('wednesday-script.yml', 'Wednesday show');
+if (genMondayBtn) genMondayBtn.onclick = () => requestScheduledShow('monday', 'Monday show');
+if (genWednesdayBtn) genWednesdayBtn.onclick = () => requestScheduledShow('wednesday', 'Wednesday show');
 
 // ===== MOBILE NAV =====
 const mobScriptsBtn = $('#mob-scripts-btn');
