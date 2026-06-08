@@ -1945,25 +1945,43 @@ async function submitTopicShow() {
   statusEl.textContent = 'Submitting...';
   statusEl.style.color = 'var(--muted)';
 
+  // Commit a request file via the Contents API. A matching `on: push` trigger
+  // in topic-show.yml picks it up and runs the generation. This only needs the
+  // "Contents: write" permission the app already uses to read private scripts —
+  // no "Actions: write" required.
+  const requestPath = `requests/topic-show-${Date.now()}.json`;
+  const payload = {
+    topic,
+    context_url: url,
+    context_notes: notes,
+    requested_at: new Date().toISOString()
+  };
+  // base64-encode the JSON, UTF-8 safe.
+  const content = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+
   try {
-    const resp = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/topic-show.yml/dispatches`, {
-      method: 'POST',
+    const resp = await fetch(`https://api.github.com/repos/${repo}/contents/${requestPath}`, {
+      method: 'PUT',
       headers: {
         'Authorization': `token ${pat}`,
         'Accept': 'application/vnd.github.v3+json',
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        ref: 'main',
-        inputs: { topic, context_url: url, context_notes: notes }
+        message: `Topic show request: ${topic}`,
+        content,
+        branch: 'main'
       })
     });
-    if (resp.status === 204) {
-      statusEl.textContent = '✓ Submitted! Check email in 3-5 min';
+    if (resp.ok) {
+      statusEl.textContent = '✓ Request submitted! Episode will appear in the GitHub Episodes panel shortly.';
       statusEl.style.color = '#22c55e';
       $('#topic-title-input').value = '';
       $('#topic-url-input').value = '';
       $('#topic-notes-input').value = '';
+    } else if (resp.status === 401 || resp.status === 403) {
+      statusEl.textContent = "Your GitHub token needs 'Contents: write' on podcast-script-generator";
+      statusEl.style.color = '#ef4444';
     } else {
       const err = await resp.text();
       statusEl.textContent = `Error ${resp.status}: ${err.substring(0, 60)}`;
