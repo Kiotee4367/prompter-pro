@@ -2015,7 +2015,7 @@ async function dispatchWorkflow(workflowFile, label) {
 
 const genMondayBtn = $('#gen-monday-btn');
 const genWednesdayBtn = $('#gen-wednesday-btn');
-if (genMondayBtn) genMondayBtn.onclick = () => dispatchWorkflow('weekly-script.yml', 'Monday show');
+if (genMondayBtn) genMondayBtn.onclick = () => dispatchWorkflow('monday-script.yml', 'Monday show');
 if (genWednesdayBtn) genWednesdayBtn.onclick = () => dispatchWorkflow('wednesday-script.yml', 'Wednesday show');
 
 // ===== MOBILE NAV =====
