@@ -2036,45 +2036,23 @@ const submitReviewBtn = $('#submit-review-btn');
 if (submitReviewBtn) submitReviewBtn.onclick = submitEpisodeReview;
 
 // ===== MANUAL EPISODE TRIGGERS =====
-async function dispatchWorkflow(workflowFile, label) {
-  const genStatus = $('#gen-status');
-  const pat = ghPatInput.value.trim();
-  const repo = ghRepoInput.value.trim();
-  if (!pat || !repo) {
-    genStatus.textContent = 'Need GitHub PAT + repo above';
-    genStatus.style.color = '#ef4444';
-    return;
-  }
-  genStatus.textContent = `Starting ${label}...`;
-  genStatus.style.color = 'var(--muted)';
-  try {
-    const resp = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFile}/dispatches`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `token ${pat}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ ref: 'main' })
-    });
-    if (resp.status === 204) {
-      genStatus.textContent = `✓ ${label} generating! Check email in 3-5 min`;
-      genStatus.style.color = '#22c55e';
-    } else {
-      const err = await resp.text();
-      genStatus.textContent = `Error ${resp.status}: ${err.substring(0, 50)}`;
-      genStatus.style.color = '#ef4444';
-    }
-  } catch (e) {
-    genStatus.textContent = `Failed: ${e.message}`;
-    genStatus.style.color = '#ef4444';
-  }
+// Commit a request file via the Contents API (Contents: write) instead of
+// dispatching the workflow (Actions: write), so these buttons never hit the
+// same 403 either. The paired workflows in podcast-script-generator trigger on
+// `on: push` to requests/<show>-show-*.json.
+async function requestScheduledShow(show, label) {
+  await commitRequest(
+    `requests/${show}-show-${Date.now()}.json`,
+    { show, requested_at: new Date().toISOString() },
+    `${label} request`,
+    $('#gen-status')
+  );
 }
 
 const genMondayBtn = $('#gen-monday-btn');
 const genWednesdayBtn = $('#gen-wednesday-btn');
-if (genMondayBtn) genMondayBtn.onclick = () => dispatchWorkflow('monday-script.yml', 'Monday show');
-if (genWednesdayBtn) genWednesdayBtn.onclick = () => dispatchWorkflow('wednesday-script.yml', 'Wednesday show');
+if (genMondayBtn) genMondayBtn.onclick = () => requestScheduledShow('monday', 'Monday show');
+if (genWednesdayBtn) genWednesdayBtn.onclick = () => requestScheduledShow('wednesday', 'Wednesday show');
 
 // ===== MOBILE NAV =====
 const mobScriptsBtn = $('#mob-scripts-btn');
