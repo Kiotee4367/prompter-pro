@@ -436,8 +436,7 @@ window.onerror = function(msg, url, line, col, err) {
     <div class="gh-section">
       <h2><span class="gh-icon">&#9671;</span> GitHub Episodes</h2>
       <div class="gh-config">
-        <input type="password" id="gh-pat-input" placeholder="GitHub Personal Access Token">
-        <input type="text" id="gh-repo-input" placeholder="owner/repo" value="Kiotee4367/podcast-script-generator">
+        <input type="password" id="gh-pat-input" placeholder="App Key">
       </div>
       <div class="gh-btn-row" style="padding: 0 12px;">
         <button class="gh-btn gh-btn-primary" id="gh-fetch-btn">Fetch Episodes</button>
@@ -1667,40 +1666,48 @@ function toggleVoice() {
 }
 
 // ===== GITHUB EPISODES INTEGRATION =====
-const ghPatInput = $('#gh-pat-input');
-const ghRepoInput = $('#gh-repo-input');
+// All GitHub access goes through a Supabase Edge Function that holds the
+// GitHub token server-side. The browser only ever sends a low-privilege App
+// Key — it never sees the GitHub token. The proxy only allows reading
+// contents/ and writing requests/*.json on the one podcast repo.
+const PROXY_URL = 'https://qxoahzeljhccbxvvnbtm.supabase.co/functions/v1/github-proxy';
+
+const ghPatInput = $('#gh-pat-input'); // now holds the App Key
 const ghFetchBtn = $('#gh-fetch-btn');
 const ghRefreshBtn = $('#gh-refresh-btn');
 const ghClearBtn = $('#gh-clear-btn');
 const ghStatus = $('#gh-status');
 const ghEpisodeList = $('#gh-episode-list');
 
-// Restore saved credentials
-const savedPat = localStorage.getItem('gh-pat');
-const savedRepo = localStorage.getItem('gh-repo');
-if (savedPat) ghPatInput.value = savedPat;
-if (savedRepo) ghRepoInput.value = savedRepo;
+// Restore saved App Key
+const savedAppKey = localStorage.getItem('gh-app-key');
+if (savedAppKey) ghPatInput.value = savedAppKey;
 
 function ghSetStatus(msg, type) {
   ghStatus.textContent = msg;
   ghStatus.className = 'gh-status' + (type ? ' ' + type : '');
 }
 
-async function ghApiFetch(endpoint) {
-  const pat = ghPatInput.value.trim();
-  const repo = ghRepoInput.value.trim();
-  if (!pat || !repo) { ghSetStatus('Enter PAT and repo', 'error'); return null; }
-  // Save credentials
-  localStorage.setItem('gh-pat', pat);
-  localStorage.setItem('gh-repo', repo);
-
-  const resp = await fetch(`https://api.github.com/repos/${repo}/${endpoint}`, {
-    headers: { 'Authorization': `token ${pat}`, 'Accept': 'application/vnd.github.v3+json' }
+// POST to the proxy with the App Key. Returns the raw Response (or null if no key).
+async function ghProxy(payload) {
+  const appKey = ghPatInput.value.trim();
+  if (!appKey) { ghSetStatus('Enter your App Key', 'error'); return null; }
+  localStorage.setItem('gh-app-key', appKey);
+  return fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-app-key': appKey },
+    body: JSON.stringify(payload)
   });
+}
+
+async function ghApiFetch(endpoint) {
+  const resp = await ghProxy({ action: 'read', endpoint });
+  if (!resp) return null;
   if (!resp.ok) {
-    if (resp.status === 401) ghSetStatus('Bad token. Check your PAT.', 'error');
-    else if (resp.status === 404) ghSetStatus('Repo not found. Check owner/repo.', 'error');
-    else ghSetStatus(`GitHub error ${resp.status}`, 'error');
+    if (resp.status === 401) ghSetStatus('Invalid App Key.', 'error');
+    else if (resp.status === 404) ghSetStatus('Not found in repo.', 'error');
+    else if (resp.status === 503) ghSetStatus('Backend not configured yet.', 'error');
+    else ghSetStatus(`Error ${resp.status}`, 'error');
     return null;
   }
   return resp.json();
@@ -1911,51 +1918,36 @@ $('#brief-modal').addEventListener('click', (e) => {
 ghFetchBtn.onclick = ghFetchEpisodes;
 ghRefreshBtn.onclick = ghFetchEpisodes;
 ghClearBtn.onclick = () => {
-  localStorage.removeItem('gh-pat');
-  localStorage.removeItem('gh-repo');
+  localStorage.removeItem('gh-app-key');
   ghPatInput.value = '';
-  ghRepoInput.value = 'Kiotee4367/podcast-script-generator';
   ghEpisodeList.innerHTML = '';
-  ghSetStatus('Credentials cleared', '');
+  ghSetStatus('App Key cleared', '');
 };
 
-// Auto-fetch on load if credentials are saved
-if (savedPat && savedRepo) {
+// Auto-fetch on load if the App Key is saved
+if (savedAppKey) {
   setTimeout(() => { ghFetchEpisodes().catch(e => console.warn('Auto-fetch failed:', e)); }, 500);
 }
 
 // ===== SHARED: COMMIT A REQUEST FILE =====
-// Commits a JSON request file to podcast-script-generator via the GitHub
-// Contents API on `main`. A matching `on: push` trigger in that repo picks the
-// file up and runs the job. This only needs the "Contents: write" permission
-// the app already uses to read the private repo — no "Actions: write" required —
-// so it never hits the 403 "Resource not accessible by personal access token"
-// that the workflow_dispatch API kept regressing on. Returns true on success.
+// Commits a JSON request file to podcast-script-generator through the proxy,
+// which writes it via the GitHub Contents API on `main`. A matching `on: push`
+// trigger in that repo picks the file up and runs the job. The GitHub token
+// lives server-side; the browser only sends the App Key. Returns true on success.
 async function commitRequest(path, payloadObject, commitMessage, statusEl) {
-  const pat = ghPatInput.value.trim();
-  const repo = ghRepoInput.value.trim();
-  if (!pat || !repo) {
-    if (statusEl) { statusEl.textContent = 'Need GitHub PAT + repo above'; statusEl.style.color = '#ef4444'; }
+  const appKey = ghPatInput.value.trim();
+  if (!appKey) {
+    if (statusEl) { statusEl.textContent = 'Enter your App Key in the GitHub Episodes panel above'; statusEl.style.color = '#ef4444'; }
     return false;
   }
-  // Persist the token here too — not just in ghApiFetch — so entering it once
-  // and using only the Submit buttons still saves it. Otherwise a reload would
-  // restore an older saved token and the new one would be silently lost.
-  localStorage.setItem('gh-pat', pat);
-  localStorage.setItem('gh-repo', repo);
+  localStorage.setItem('gh-app-key', appKey);
   if (statusEl) { statusEl.textContent = 'Submitting...'; statusEl.style.color = 'var(--muted)'; }
 
-  // base64-encode the JSON payload, UTF-8 safe.
-  const content = btoa(unescape(encodeURIComponent(JSON.stringify(payloadObject, null, 2))));
   try {
-    const resp = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${pat}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ message: commitMessage, content, branch: 'main' })
+    const resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-key': appKey },
+      body: JSON.stringify({ action: 'commit', path, payload: payloadObject, message: commitMessage })
     });
     if (resp.ok) {
       if (statusEl) {
@@ -1964,16 +1956,23 @@ async function commitRequest(path, payloadObject, commitMessage, statusEl) {
       }
       return true;
     }
-    if (resp.status === 401 || resp.status === 403) {
+    if (resp.status === 401) {
       if (statusEl) {
-        statusEl.textContent = "Your GitHub token needs 'Contents: write' on podcast-script-generator";
+        statusEl.textContent = 'Invalid App Key — check the key in the GitHub Episodes panel';
+        statusEl.style.color = '#ef4444';
+      }
+      return false;
+    }
+    if (resp.status === 503) {
+      if (statusEl) {
+        statusEl.textContent = 'Backend not configured yet (GitHub token not set in Supabase)';
         statusEl.style.color = '#ef4444';
       }
       return false;
     }
     const err = await resp.text();
     if (statusEl) {
-      statusEl.textContent = `Could not submit request: ${err.substring(0, 60)}`;
+      statusEl.textContent = `Could not submit request: ${err.substring(0, 80)}`;
       statusEl.style.color = '#ef4444';
     }
     return false;
