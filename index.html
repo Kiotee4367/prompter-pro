@@ -1938,6 +1938,11 @@ async function commitRequest(path, payloadObject, commitMessage, statusEl) {
     if (statusEl) { statusEl.textContent = 'Need GitHub PAT + repo above'; statusEl.style.color = '#ef4444'; }
     return false;
   }
+  // Persist the token here too — not just in ghApiFetch — so entering it once
+  // and using only the Submit buttons still saves it. Otherwise a reload would
+  // restore an older saved token and the new one would be silently lost.
+  localStorage.setItem('gh-pat', pat);
+  localStorage.setItem('gh-repo', repo);
   if (statusEl) { statusEl.textContent = 'Submitting...'; statusEl.style.color = 'var(--muted)'; }
 
   // base64-encode the JSON payload, UTF-8 safe.
