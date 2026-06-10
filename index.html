@@ -1716,6 +1716,7 @@ async function ghApiFetch(endpoint) {
   if (!resp.ok) {
     if (resp.status === 401) ghSetStatus('Invalid App Key — click ✕ to clear, then re-enter it.', 'error');
     else if (resp.status === 404) ghSetStatus('Not found in repo.', 'error');
+    else if (resp.status === 502) ghSetStatus('Backend GitHub token expired or revoked — update GITHUB_TOKEN in Supabase.', 'error');
     else if (resp.status === 503) ghSetStatus('Backend not configured yet.', 'error');
     else ghSetStatus(`Error ${resp.status}`, 'error');
     return null;
@@ -1969,6 +1970,13 @@ async function commitRequest(path, payloadObject, commitMessage, statusEl) {
     if (resp.status === 401) {
       if (statusEl) {
         statusEl.textContent = 'Invalid App Key — clear (✕) and re-enter it in the GitHub Episodes panel';
+        statusEl.style.color = '#ef4444';
+      }
+      return false;
+    }
+    if (resp.status === 502) {
+      if (statusEl) {
+        statusEl.textContent = 'Backend GitHub token expired or revoked — update GITHUB_TOKEN in Supabase';
         statusEl.style.color = '#ef4444';
       }
       return false;
