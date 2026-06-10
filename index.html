@@ -282,6 +282,10 @@
   }
   .gh-config input::placeholder { color: var(--dim); }
   .gh-config input:focus { outline: none; border-color: var(--accent); }
+  /* Mask the App Key like a password without using type="password" (which password
+     managers auto-fill and clobber). Placeholder stays unmasked. */
+  .gh-config input.masked { -webkit-text-security: disc; text-security: disc; }
+  .gh-config input.masked:placeholder-shown { -webkit-text-security: none; text-security: none; }
   .gh-btn-row { display: flex; gap: 4px; margin-bottom: 6px; }
   .gh-btn {
     flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px;
@@ -436,7 +440,13 @@ window.onerror = function(msg, url, line, col, err) {
     <div class="gh-section">
       <h2><span class="gh-icon">&#9671;</span> GitHub Episodes</h2>
       <div class="gh-config">
-        <input type="password" id="gh-pat-input" placeholder="App Key">
+        <!-- NOTE: deliberately type="text" (masked via CSS .masked), not type="password".
+             A password field gets auto-filled by browser/extension password managers on
+             this origin, silently clobbering the App Key with a saved credential and
+             causing "Invalid App Key" (401). The attributes below opt out of autofill. -->
+        <input type="text" id="gh-pat-input" class="masked" placeholder="App Key"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+               data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other">
       </div>
       <div class="gh-btn-row" style="padding: 0 12px;">
         <button class="gh-btn gh-btn-primary" id="gh-fetch-btn">Fetch Episodes</button>
@@ -1704,7 +1714,7 @@ async function ghApiFetch(endpoint) {
   const resp = await ghProxy({ action: 'read', endpoint });
   if (!resp) return null;
   if (!resp.ok) {
-    if (resp.status === 401) ghSetStatus('Invalid App Key.', 'error');
+    if (resp.status === 401) ghSetStatus('Invalid App Key — click ✕ to clear, then re-enter it.', 'error');
     else if (resp.status === 404) ghSetStatus('Not found in repo.', 'error');
     else if (resp.status === 503) ghSetStatus('Backend not configured yet.', 'error');
     else ghSetStatus(`Error ${resp.status}`, 'error');
@@ -1958,7 +1968,7 @@ async function commitRequest(path, payloadObject, commitMessage, statusEl) {
     }
     if (resp.status === 401) {
       if (statusEl) {
-        statusEl.textContent = 'Invalid App Key — check the key in the GitHub Episodes panel';
+        statusEl.textContent = 'Invalid App Key — clear (✕) and re-enter it in the GitHub Episodes panel';
         statusEl.style.color = '#ef4444';
       }
       return false;
