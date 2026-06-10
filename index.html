@@ -29,6 +29,23 @@
   /* ===== EDITOR VIEW ===== */
   #editor-view { display: flex; height: 100vh; }
 
+  /* -- Pane resizers: drag to widen/narrow, double-click to collapse -- */
+  .pane-resizer {
+    flex: 0 0 6px; align-self: stretch; cursor: col-resize; position: relative;
+    background: transparent; transition: background 0.15s; z-index: 5; user-select: none;
+  }
+  .pane-resizer::before {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
+    transform: translateX(-50%); background: var(--border);
+  }
+  .pane-resizer:hover, .pane-resizer.dragging { background: var(--accent)55; }
+  .pane-resizer:hover::before, .pane-resizer.dragging::before { background: var(--accent); }
+  /* A collapsed side pane shrinks to nothing; its resizer stays so it can reopen. */
+  #sidebar.pane-collapsed, #settings-panel.pane-collapsed {
+    width: 0 !important; min-width: 0; padding: 0; border: none; overflow: hidden;
+  }
+  .pane-resizer.is-collapsed::before { background: var(--accent); width: 2px; }
+
   /* -- Sidebar -- */
   #sidebar {
     width: 280px; background: var(--surface); border-right: 1px solid var(--border);
@@ -379,8 +396,12 @@
   }
   @media (max-width: 700px) {
     #editor-view { flex-direction: column; }
-    #sidebar, #settings-panel { display: none; position: fixed; top: 0; bottom: 0; z-index: 50; width: 280px; overflow-y: auto; }
+    #sidebar, #settings-panel { display: none; position: fixed; top: 0; bottom: 0; z-index: 50; width: 280px !important; overflow-y: auto; }
     #sidebar.mobile-open { display: flex; left: 0; }
+    .pane-resizer { display: none; }
+    /* Desktop resize/collapse state must not zero-out the mobile drawers. */
+    #sidebar.pane-collapsed, #settings-panel.pane-collapsed { width: 280px !important; min-width: 0; overflow-y: auto; }
+    #settings-panel.pane-collapsed { padding: 16px; }
     #settings-panel.mobile-open { display: block; right: 0; }
     .mobile-overlay { display: none; position: fixed; inset: 0; background: #000a; z-index: 49; }
     .mobile-overlay.visible { display: block; }
@@ -522,6 +543,8 @@ window.onerror = function(msg, url, line, col, err) {
 
   <div class="mobile-overlay" id="mobile-overlay"></div>
 
+  <div class="pane-resizer" id="resize-sidebar" title="Drag to resize · double-click to collapse/expand"></div>
+
   <!-- Main Editor -->
   <div id="main-area">
     <div class="mobile-nav" id="mobile-nav">
@@ -592,6 +615,8 @@ Blank lines create visual pauses."></textarea>
       <button class="btn btn-primary" id="start-btn">Start Prompter</button>
     </div>
   </div>
+
+  <div class="pane-resizer" id="resize-settings" title="Drag to resize · double-click to collapse/expand"></div>
 
   <!-- Settings Panel -->
   <div id="settings-panel">
@@ -896,6 +921,70 @@ if (scripts.length === 0) {
   loadScript(activeScriptId);
 }
 renderScriptList();
+
+// ===== RESIZABLE / COLLAPSIBLE PANES =====
+// Drag a resizer to widen/narrow the adjacent side pane (the editor fills the
+// rest). Double-click a resizer to collapse that pane, double-click again to
+// restore it. Widths and collapsed state persist in localStorage.
+(function setupPanes() {
+  const MIN = 160, MAX = 640, COLLAPSE_AT = 110;
+  // side 'left'  -> pane is left of resizer (sidebar): drag right = wider
+  // side 'right' -> pane is right of resizer (settings): drag left  = wider
+  function setupPane(resizer, pane, side, key) {
+    if (!resizer || !pane) return;
+    const widthKey = key + '-w', collapsedKey = key + '-collapsed';
+
+    function applyWidth(px) { pane.style.width = px + 'px'; localStorage.setItem(widthKey, px); }
+    function setCollapsed(on) {
+      pane.classList.toggle('pane-collapsed', on);
+      resizer.classList.toggle('is-collapsed', on);
+      resizer.style.cursor = on ? 'pointer' : 'col-resize';
+      localStorage.setItem(collapsedKey, on ? '1' : '0');
+    }
+
+    // Restore saved state
+    const savedW = parseInt(localStorage.getItem(widthKey), 10);
+    if (savedW >= MIN && savedW <= MAX) pane.style.width = savedW + 'px';
+    if (localStorage.getItem(collapsedKey) === '1') setCollapsed(true);
+
+    let dragging = false, startX = 0, startW = 0;
+
+    resizer.addEventListener('mousedown', e => {
+      // startW is ~0 when collapsed, so dragging outward re-expands naturally.
+      dragging = true;
+      startX = e.clientX; startW = pane.getBoundingClientRect().width;
+      resizer.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const delta = side === 'left' ? (e.clientX - startX) : (startX - e.clientX);
+      let w = startW + delta;
+      if (w < COLLAPSE_AT) { applyWidth(MIN); setCollapsed(true); return; }
+      setCollapsed(false);
+      applyWidth(Math.max(MIN, Math.min(MAX, w)));
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      resizer.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    });
+
+    // Double-click toggles collapse without needing a precise drag.
+    resizer.addEventListener('dblclick', () => {
+      setCollapsed(!pane.classList.contains('pane-collapsed'));
+    });
+  }
+
+  setupPane($('#resize-sidebar'), $('#sidebar'), 'left', 'pane-sidebar');
+  setupPane($('#resize-settings'), $('#settings-panel'), 'right', 'pane-settings');
+})();
 
 $('#new-script-btn').onclick = () => createScript('', '');
 
