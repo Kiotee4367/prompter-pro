@@ -820,6 +820,12 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
 
 function saveScripts() { localStorage.setItem('prompter-scripts', JSON.stringify(scripts)); }
 
+// Titles the user has deleted. GitHub auto-import skips these so a deleted
+// script stays gone instead of reappearing on the next fetch. Re-loading an
+// episode from the GitHub Episodes list clears it from this set on purpose.
+let dismissedScripts = new Set(JSON.parse(localStorage.getItem('prompter-dismissed') || '[]'));
+function saveDismissed() { localStorage.setItem('prompter-dismissed', JSON.stringify([...dismissedScripts])); }
+
 function renderScriptList() {
   const list = $('#script-list');
   list.innerHTML = '';
@@ -860,12 +866,17 @@ function saveCurrentScript() {
 function createScript(title, text) {
   saveCurrentScript();
   const id = genId();
-  scripts.push({ id, title: title || 'Untitled', text: text || '' });
+  const finalTitle = title || 'Untitled';
+  // Explicitly (re)creating a script un-dismisses it, so a deliberate re-add sticks.
+  if (dismissedScripts.delete(finalTitle)) saveDismissed();
+  scripts.push({ id, title: finalTitle, text: text || '' });
   saveScripts();
   loadScript(id);
 }
 
 function deleteScript(id) {
+  const removed = scripts.find(x => x.id === id);
+  if (removed && removed.title) { dismissedScripts.add(removed.title); saveDismissed(); }
   scripts = scripts.filter(x => x.id !== id);
   saveScripts();
   if (id === activeScriptId) {
@@ -1795,7 +1806,7 @@ async function ghFetchEpisodes() {
       } else {
         title = `Episode ${dateStr}`;
       }
-      if (!existingTitles.has(title)) {
+      if (!existingTitles.has(title) && !dismissedScripts.has(title)) {
         const fileData = await ghApiFetch(`contents/${ep.path}`);
         if (fileData && fileData.content) {
           let text;

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'prompterpro-v6';
+const CACHE_NAME = 'prompterpro-v7';
 const ASSETS = [
   './',
   './index.html',
