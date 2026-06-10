@@ -1830,10 +1830,12 @@ async function ghFetchEpisodes() {
   const data = await ghApiFetch('contents/output');
   if (!data) { ghEpisodeList.innerHTML = ''; return; }
 
-  // Filter episode files and sort newest first
+  // Filter episode files and sort by embedded date, newest first (regardless of
+  // prefix). Falls back to the filename as a tiebreaker for same-date episodes.
+  const epDate = f => (f.name.match(/(\d{4}-\d{2}-\d{2})/) || [''])[0];
   const episodes = data
     .filter(f => (f.name.startsWith('episode-') || f.name.startsWith('special-topics-episode-') || f.name.startsWith('topic-episode-')) && f.name.endsWith('.txt'))
-    .sort((a, b) => b.name.localeCompare(a.name));
+    .sort((a, b) => epDate(b).localeCompare(epDate(a)) || b.name.localeCompare(a.name));
 
   if (episodes.length === 0) {
     ghEpisodeList.innerHTML = '<div class="gh-loading">No episodes found</div>';
