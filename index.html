@@ -193,7 +193,14 @@
     color: var(--fg); opacity: 0.55;
   }
   #prompter-text .line.current {
-    color: var(--fg); opacity: 1; font-weight: 700;
+    /* Emphasize the current line WITHOUT changing glyph metrics. font-weight
+       here re-wrapped the line as it became current, shifting every offsetTop
+       below it — that made the highlight stick on a line and garbled the text
+       as it jumped. text-stroke thickens the glyphs in place (same advance
+       widths, no reflow), so the layout stays stable while scrolling. */
+    color: var(--fg); opacity: 1;
+    -webkit-text-stroke: 0.75px var(--fg);
+    text-stroke: 0.75px var(--fg);
     text-shadow: 0 0 40px var(--accent), 0 0 80px var(--accent);
   }
   /* Upcoming lines (below current) — bright so host can read ahead */
@@ -851,10 +858,41 @@ function saveScripts() { localStorage.setItem('prompter-scripts', JSON.stringify
 let dismissedScripts = new Set(JSON.parse(localStorage.getItem('prompter-dismissed') || '[]'));
 function saveDismissed() { localStorage.setItem('prompter-dismissed', JSON.stringify([...dismissedScripts])); }
 
+// Canonical title for a GitHub episode file. Used for BOTH auto-import and
+// manual load so the dismiss/re-add keys always match across code paths.
+function episodeTitleFromName(name) {
+  const dm = name.match(/(\d{4}-\d{2}-\d{2})/);
+  const dateStr = dm ? dm[1] : name;
+  if (name.startsWith('topic-episode-')) {
+    const m = name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
+    const slugReadable = m ? m[1].replace(/-/g, ' ') : name;
+    return `Topic: ${slugReadable} (${dateStr})`;
+  }
+  if (name.startsWith('special-topics-')) return `Special Topics ${dateStr}`;
+  return `Episode ${dateStr}`;
+}
+
+// Sort key: the YYYY-MM-DD embedded in a script title, or '' if none.
+function scriptDateKey(s) {
+  const m = (s.title || '').match(/(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
 function renderScriptList() {
   const list = $('#script-list');
   list.innerHTML = '';
-  scripts.forEach(s => {
+  // Most recent episode at the top. Dated scripts sort newest-first; undated
+  // (user-created) scripts keep their relative order below the dated ones.
+  const ordered = scripts
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const da = scriptDateKey(a.s), db = scriptDateKey(b.s);
+      if (da && db) return db.localeCompare(da) || a.i - b.i;
+      if (da !== db) return da ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map(x => x.s);
+  ordered.forEach(s => {
     const div = document.createElement('div');
     div.className = 'script-item' + (s.id === activeScriptId ? ' active' : '');
     div.innerHTML = `<span class="name">${s.title || 'Untitled'}</span><button class="delete-script" title="Delete">&times;</button>`;
@@ -1867,8 +1905,7 @@ async function ghFetchEpisodes() {
         <span style="font-weight:500;">${label}</span>
         <span style="font-size:10px;color:${tagColor};">${tag}</span>
       </span><span class="ep-actions"><button class="ep-brief-btn" title="View research brief">Brief</button></span>`;
-    const slotTitle = isTopic ? `Topic: ${topicSlug}` : (isSpecial ? `Special Topics ${dateStr}` : dateStr);
-    div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path, slotTitle);
+    div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path);
     const briefBtn = div.querySelector('.ep-brief-btn');
     briefBtn.onclick = (e) => {
       e.stopPropagation();
@@ -1883,20 +1920,7 @@ async function ghFetchEpisodes() {
   let imported = 0;
   for (const ep of episodes) {
     try {
-      const dateMatch = ep.name.match(/(\d{4}-\d{2}-\d{2})/);
-      const dateStr = dateMatch ? dateMatch[1] : ep.name;
-      const isSpecial = ep.name.startsWith('special-topics-');
-      const isTopic = ep.name.startsWith('topic-episode-');
-      let title;
-      if (isTopic) {
-        const m = ep.name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
-        const slugReadable = m ? m[1].replace(/-/g, ' ') : ep.name;
-        title = `Topic: ${slugReadable} (${dateStr})`;
-      } else if (isSpecial) {
-        title = `Special Topics ${dateStr}`;
-      } else {
-        title = `Episode ${dateStr}`;
-      }
+      const title = episodeTitleFromName(ep.name);
       if (!existingTitles.has(title) && !dismissedScripts.has(title)) {
         const fileData = await ghApiFetch(`contents/${ep.path}`);
         if (fileData && fileData.content) {
@@ -1962,7 +1986,7 @@ function convertScriptFormat(text) {
   return converted.join('\n');
 }
 
-async function ghLoadEpisode(filePath, dateStr) {
+async function ghLoadEpisode(filePath) {
   ghSetStatus('Loading episode...', '');
   const data = await ghApiFetch(`contents/${filePath}`);
   if (!data || !data.content) { ghSetStatus('Failed to load episode', 'error'); return; }
@@ -1977,9 +2001,19 @@ async function ghLoadEpisode(filePath, dateStr) {
   }
   const converted = convertScriptFormat(text);
 
-  // Create a new script slot
-  createScript(`Episode ${dateStr}`, converted);
-  ghSetStatus(`Loaded: Episode ${dateStr}`, 'success');
+  // Choosing an episode from the GitHub list is the ONLY way to bring back a
+  // dismissed script. Use the canonical title so it matches the dismiss/import
+  // key; if a slot with that title already exists, un-dismiss and load it
+  // instead of creating a duplicate.
+  const title = episodeTitleFromName(filePath.split('/').pop());
+  const existing = scripts.find(x => x.title === title);
+  if (existing) {
+    if (dismissedScripts.delete(title)) saveDismissed();
+    loadScript(existing.id);
+  } else {
+    createScript(title, converted);
+  }
+  ghSetStatus(`Loaded: ${title}`, 'success');
 }
 
 async function ghLoadTopicBrief(dateStr, dateSlug) {
