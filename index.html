@@ -509,6 +509,9 @@ window.onerror = function(msg, url, line, col, err) {
                style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
         <input type="text" id="topic-notes-input" placeholder="Angle / notes (optional)"
                style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
+        <label for="topic-file-input" style="display:block; font-size:11px; color:var(--muted); margin-bottom:2px;">Research file (optional): .txt, .md, .vtt, .srt, .csv</label>
+        <input type="file" id="topic-file-input" accept=".txt,.md,.markdown,.vtt,.srt,.csv,.json,.log,text/*"
+               style="width:100%; color:var(--fg); font-size:11px; margin-bottom:4px;">
         <button id="submit-topic-btn"
                 style="width:100%; padding:7px 10px; background:#8b5cf622; color:#8b5cf6; border:1px solid #8b5cf644; border-radius:5px; font-size:12px; cursor:pointer; font-weight:500;">
           &#128221; Generate Topic Show
@@ -2141,6 +2144,7 @@ async function submitTopicShow() {
   const topic = $('#topic-title-input').value.trim();
   const url = $('#topic-url-input').value.trim();
   const notes = $('#topic-notes-input').value.trim();
+  const fileInput = $('#topic-file-input');
   const statusEl = $('#topic-status');
 
   if (!topic) {
@@ -2149,14 +2153,42 @@ async function submitTopicShow() {
     return;
   }
 
+  // Optional research file: read it as text and ride it along in the request so
+  // the generator can ingest it as a primary source.
+  let researchName = '';
+  let researchContent = '';
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (file) {
+    const MAX = 400 * 1024; // 400 KB of text
+    if (file.size > MAX) {
+      statusEl.textContent = `Research file too large (max ${Math.round(MAX / 1024)} KB of text)`;
+      statusEl.style.color = '#ef4444';
+      return;
+    }
+    try {
+      researchContent = await file.text();
+      researchName = file.name;
+    } catch (e) {
+      statusEl.textContent = 'Could not read that file';
+      statusEl.style.color = '#ef4444';
+      return;
+    }
+  }
+
+  const payload = {
+    topic,
+    context_url: url,
+    context_notes: notes,
+    requested_at: new Date().toISOString()
+  };
+  if (researchContent.trim()) {
+    payload.research_file_name = researchName;
+    payload.research_file_content = researchContent;
+  }
+
   const ok = await commitRequest(
     `requests/topic-show-${Date.now()}.json`,
-    {
-      topic,
-      context_url: url,
-      context_notes: notes,
-      requested_at: new Date().toISOString()
-    },
+    payload,
     `Topic show request: ${topic}`,
     statusEl
   );
@@ -2164,6 +2196,7 @@ async function submitTopicShow() {
     $('#topic-title-input').value = '';
     $('#topic-url-input').value = '';
     $('#topic-notes-input').value = '';
+    if (fileInput) fileInput.value = '';
   }
 }
 const submitTopicBtn = $('#submit-topic-btn');
