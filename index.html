@@ -193,7 +193,14 @@
     color: var(--fg); opacity: 0.55;
   }
   #prompter-text .line.current {
-    color: var(--fg); opacity: 1; font-weight: 700;
+    /* Emphasize the current line WITHOUT changing glyph metrics. font-weight
+       here re-wrapped the line as it became current, shifting every offsetTop
+       below it — that made the highlight stick on a line and garbled the text
+       as it jumped. text-stroke thickens the glyphs in place (same advance
+       widths, no reflow), so the layout stays stable while scrolling. */
+    color: var(--fg); opacity: 1;
+    -webkit-text-stroke: 0.75px var(--fg);
+    text-stroke: 0.75px var(--fg);
     text-shadow: 0 0 40px var(--accent), 0 0 80px var(--accent);
   }
   /* Upcoming lines (below current) — bright so host can read ahead */
