@@ -509,8 +509,8 @@ window.onerror = function(msg, url, line, col, err) {
                style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
         <input type="text" id="topic-notes-input" placeholder="Angle / notes (optional)"
                style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; margin-bottom:4px; font-family:inherit;">
-        <label for="topic-file-input" style="display:block; font-size:11px; color:var(--muted); margin-bottom:2px;">Research file (optional): .txt, .md, .vtt, .srt, .csv</label>
-        <input type="file" id="topic-file-input" accept=".txt,.md,.markdown,.vtt,.srt,.csv,.json,.log,text/*"
+        <label for="topic-file-input" style="display:block; font-size:11px; color:var(--muted); margin-bottom:2px;">Research file (optional): PDF, .txt, .md, .vtt, .srt, .csv (up to 5 MB)</label>
+        <input type="file" id="topic-file-input" accept=".pdf,application/pdf,.txt,.md,.markdown,.vtt,.srt,.csv,.json,.log,text/*"
                style="width:100%; color:var(--fg); font-size:11px; margin-bottom:4px;">
         <button id="submit-topic-btn"
                 style="width:100%; padding:7px 10px; background:#8b5cf622; color:#8b5cf6; border:1px solid #8b5cf644; border-radius:5px; font-size:12px; cursor:pointer; font-weight:500;">
@@ -2153,20 +2153,29 @@ async function submitTopicShow() {
     return;
   }
 
-  // Optional research file: read it as text and ride it along in the request so
-  // the generator can ingest it as a primary source.
+  // Optional research file: text files ride along as text; PDFs (and other
+  // binary files) are base64-encoded so the generator can extract their text.
   let researchName = '';
-  let researchContent = '';
+  let researchText = '';
+  let researchB64 = '';
   const file = fileInput && fileInput.files && fileInput.files[0];
   if (file) {
-    const MAX = 400 * 1024; // 400 KB of text
+    const MAX = 5 * 1024 * 1024; // 5 MB
     if (file.size > MAX) {
-      statusEl.textContent = `Research file too large (max ${Math.round(MAX / 1024)} KB of text)`;
+      statusEl.textContent = `Research file too large (max ${Math.round(MAX / 1024 / 1024)} MB)`;
       statusEl.style.color = '#ef4444';
       return;
     }
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
     try {
-      researchContent = await file.text();
+      if (isPdf) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        researchB64 = btoa(bin);
+      } else {
+        researchText = await file.text();
+      }
       researchName = file.name;
     } catch (e) {
       statusEl.textContent = 'Could not read that file';
@@ -2181,9 +2190,12 @@ async function submitTopicShow() {
     context_notes: notes,
     requested_at: new Date().toISOString()
   };
-  if (researchContent.trim()) {
+  if (researchB64) {
     payload.research_file_name = researchName;
-    payload.research_file_content = researchContent;
+    payload.research_file_content_b64 = researchB64;
+  } else if (researchText.trim()) {
+    payload.research_file_name = researchName;
+    payload.research_file_content = researchText;
   }
 
   const ok = await commitRequest(
