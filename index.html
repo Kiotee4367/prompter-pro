@@ -275,6 +275,9 @@
   #voice-indicator.active { display: flex; }
   #voice-indicator.speaking { border-color: #22c55e; }
   #voice-indicator.silent { border-color: #f59e0b; }
+  #voice-indicator.following { border-color: #3b82f6; }
+  .mic-dot.following { background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
+  .setting-help { font-size: 11px; color: var(--muted); line-height: 1.4; margin: -4px 0 10px; }
   .mic-dot {
     width: 10px; height: 10px; border-radius: 50%; transition: background 0.15s;
   }
@@ -619,6 +622,7 @@ Blank lines create visual pauses."></textarea>
         <span class="kbd">M</span> mark
         <span class="kbd">T</span> tap
         <span class="kbd">V</span> voice
+        <span class="kbd">F</span> follow
         <span class="kbd">?</span> all shortcuts
       </span>
       <div class="spacer"></div>
@@ -665,6 +669,14 @@ Blank lines create visual pauses."></textarea>
       <label>Pause after (s)</label>
       <input type="range" id="voice-delay" min="0.5" max="5" value="1.5" step="0.5">
       <span class="val" id="vd-val">1.5s</span>
+    </div>
+    <div class="setting-row">
+      <label>Voice follow (auto speed)</label>
+      <label class="toggle-switch"><input type="checkbox" id="follow-check"><span class="toggle-track"></span></label>
+    </div>
+    <div class="setting-help" id="follow-help" style="display:none;">
+      Listens to you read and speeds up or slows down to match your pace. Stops when you stop talking.
+      Needs Chrome, Edge or Safari and an internet connection. Press <span class="kbd">F</span> to toggle while prompting.
     </div>
 
     <h3>Display</h3>
@@ -750,6 +762,7 @@ Blank lines create visual pauses."></textarea>
         <span class="shortcut-key">M</span><span class="shortcut-desc">Add timestamp marker</span>
         <span class="shortcut-key">T</span><span class="shortcut-desc">Toggle tap-to-advance</span>
         <span class="shortcut-key">V</span><span class="shortcut-desc">Toggle voice-activated pause</span>
+        <span class="shortcut-key">F</span><span class="shortcut-desc">Toggle voice follow (auto speed)</span>
         <span class="shortcut-key">?</span><span class="shortcut-desc">Show shortcuts overlay</span>
       </div>
     </div>
@@ -1128,6 +1141,7 @@ const settingsDefs = [
   { key: 'voice-check',     sel: '#voice-check',     type: 'checkbox' },
   { key: 'voice-threshold', sel: '#voice-threshold',  type: 'range' },
   { key: 'voice-delay',     sel: '#voice-delay',      type: 'range' },
+  { key: 'follow-check',    sel: '#follow-check',     type: 'checkbox' },
 ];
 
 function saveAllSettings() {
@@ -1167,6 +1181,8 @@ function restoreAllSettings() {
       $('#voice-sensitivity-row').style.display = vcEl.checked ? 'flex' : 'none';
       $('#voice-delay-row').style.display = vcEl.checked ? 'flex' : 'none';
     }
+    const fcEl = $('#follow-check');
+    if (fcEl) $('#follow-help').style.display = fcEl.checked ? 'block' : 'none';
     // Sync editor font with prompter font
     editorFont.value = fontSelect.value;
     applyEditorStyles();
@@ -1342,9 +1358,14 @@ async function startPrompter() {
   // Webcam
   try { if (webcamCheck && webcamCheck.checked) await startWebcam(); } catch(e) { console.warn('Webcam failed:', e); }
 
-  // Voice-activated pause
+  // Voice follow (auto speed) takes priority over voice-activated pause
+  const fc = $('#follow-check');
   const vc = $('#voice-check');
-  try { if (vc && vc.checked) await startVoiceDetection(); } catch(e) { console.warn('Voice init failed:', e); }
+  if (fc && fc.checked) {
+    try { startVoiceFollow(); } catch(e) { console.warn('Voice follow init failed:', e); }
+  } else {
+    try { if (vc && vc.checked) await startVoiceDetection(); } catch(e) { console.warn('Voice init failed:', e); }
+  }
 
   // Countdown
   await doCountdown(countdownSec ? +countdownSec.value : 0);
@@ -1380,7 +1401,7 @@ async function startPrompter() {
   sessionMarkers = [];
   pauseBtn.textContent = tapMode ? 'Tap Mode' : 'Pause';
   hudSpeed.textContent = speed + ' px/s';
-  hudMode.textContent = tapMode ? '[TAP]' : '';
+  hudMode.textContent = tapMode ? '[TAP]' : (followActive ? '[FOLLOW]' : '');
   elapsedSec = 0;
   hudTimer.textContent = '0:00';
   lastTime = performance.now();
@@ -1412,11 +1433,11 @@ function tick(now) {
   try {
     if (!paused) {
       const dt = (now - lastTime) / 1000;
-      let effectiveSpeed = speed;
+      let effectiveSpeed = followActive ? followSpeed(now) : speed;
 
-      // Ramp up/down
+      // Ramp up/down (voice follow manages its own speed)
       const rc = $('#ramp-check');
-      if (rc && rc.checked && totalHeight > 0) {
+      if (!followActive && rc && rc.checked && totalHeight > 0) {
         const rampPx = totalHeight * 0.05;
         if (rampPx > 0) {
           if (scrollPos < rampPx) {
@@ -1428,6 +1449,7 @@ function tick(now) {
       }
 
       scrollPos += effectiveSpeed * dt;
+      if (scrollPos < 0) scrollPos = 0;
       if (scrollPos >= totalHeight) {
         scrollPos = totalHeight;
         showEndOfScript();
@@ -1510,6 +1532,7 @@ function exitPrompter() {
   if (timerInterval) clearInterval(timerInterval);
   stopWebcam();
   stopVoiceDetection();
+  stopVoiceFollow();
   hideEndOfScript();
   hidePauseOverlay();
   prompterView.style.display = 'none';
@@ -1521,7 +1544,7 @@ function adjustSpeed(delta) {
   speed = Math.max(5, Math.min(200, speed + delta));
   speedSlider.value = speed;
   speedVal.textContent = speed;
-  hudSpeed.textContent = speed + ' px/s';
+  if (!followActive) hudSpeed.textContent = speed + ' px/s';
   updatePresetBtns();
 }
 
@@ -1578,8 +1601,8 @@ document.addEventListener('keydown', e => {
   else if (e.code === 'Escape') exitPrompter();
   else if (e.code === 'ArrowUp') { e.preventDefault(); adjustSpeed(2); }
   else if (e.code === 'ArrowDown') { e.preventDefault(); adjustSpeed(-2); }
-  else if (e.code === 'ArrowLeft') { scrollPos = Math.max(0, scrollPos - 150); }
-  else if (e.code === 'ArrowRight') { scrollPos = Math.min(totalHeight, scrollPos + 150); }
+  else if (e.code === 'ArrowLeft') { scrollPos = Math.max(0, scrollPos - 150); followResync(); }
+  else if (e.code === 'ArrowRight') { scrollPos = Math.min(totalHeight, scrollPos + 150); followResync(); }
   else if (e.code === 'KeyM') addMarker();
   else if (e.code === 'KeyT') {
     tapMode = !tapMode;
@@ -1590,6 +1613,7 @@ document.addEventListener('keydown', e => {
     else { lastTime = performance.now(); if (!raf) raf = requestAnimationFrame(tick); }
   }
   else if (e.code === 'KeyV') { toggleVoice(); }
+  else if (e.code === 'KeyF') { toggleFollow(); }
   else if (e.key === '?') {
     const overlay = $('#shortcuts-overlay');
     overlay.classList.toggle('visible');
@@ -1634,6 +1658,7 @@ voiceCheck.onchange = () => {
   const show = voiceCheck.checked;
   $('#voice-sensitivity-row').style.display = show ? 'flex' : 'none';
   $('#voice-delay-row').style.display = show ? 'flex' : 'none';
+  if (show) { $('#follow-check').checked = false; $('#follow-help').style.display = 'none'; }
   saveAllSettings();
 };
 voiceThreshold.oninput = () => { $('#vt-val').textContent = voiceThreshold.value; saveAllSettings(); };
@@ -1811,10 +1836,309 @@ function toggleVoice() {
     stopVoiceDetection();
     voiceCheck.checked = false;
   } else {
+    if (followActive) { stopVoiceFollow(); $('#follow-check').checked = false; }
     voiceCheck.checked = true;
     startVoiceDetection();
   }
 }
+
+// ===== VOICE FOLLOW (match scroll speed to your reading cadence) =====
+// Uses the browser's speech recognition (Chrome, Edge, Safari) to hear the
+// words being read, finds them in the script, and steers the scroll speed so
+// the line being read stays on the guide. Reading faster speeds the scroll
+// up, reading slower slows it down, and going silent stops it.
+const followCheck = $('#follow-check');
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+let followActive = false;      // feature switched on for this session
+let followRec = null;          // SpeechRecognition instance
+let followRestartTimer = null;
+let followWords = [];          // [{ w, el, frac }] every readable word in the script
+let followNorm = [];           // just the normalized words, for matching
+let followPos = -1;            // index of the last word we heard (-1 = no lock yet)
+let followLastMatchTime = 0;   // when followPos last changed
+let followLastSpeechTime = 0;  // when recognition last delivered anything
+let followSamples = [];        // [{ t, px, idx }] recent matched positions, for rate estimate
+let followEff = 0;             // current effective scroll speed (px/s)
+let followHudAt = 0;
+
+// Show/hide help text; follow and voice-pause are mutually exclusive
+followCheck.onchange = () => {
+  const on = followCheck.checked;
+  if (on && !SpeechRec) {
+    followCheck.checked = false;
+    alert('Voice follow needs Chrome, Edge or Safari. This browser does not support speech recognition.');
+    return;
+  }
+  $('#follow-help').style.display = on ? 'block' : 'none';
+  if (on) {
+    voiceCheck.checked = false;
+    $('#voice-sensitivity-row').style.display = 'none';
+    $('#voice-delay-row').style.display = 'none';
+  }
+  saveAllSettings();
+};
+
+// --- Pure helpers (no DOM) ---
+function followNormWord(w) {
+  return w.toLowerCase().replace(/[^a-z0-9']/g, '').replace(/^'+|'+$/g, '');
+}
+function followTokenize(text) {
+  return String(text || '').split(/\s+/).map(followNormWord).filter(Boolean);
+}
+// Loose equality: exact, or same first 4 letters on longer words
+// (so "running"/"runs", "twenty"/"twenty-five" still count)
+function followSimilar(a, b) {
+  if (a === b) return true;
+  return a.length >= 5 && b.length >= 5 && a.slice(0, 4) === b.slice(0, 4);
+}
+
+// Find where the last few spoken words sit in the script.
+// Local alignment (match +2, mismatch/gap -1) of `query` against the script
+// words inside a window around `expected`. Returns { idx, score } for the
+// script word where the best alignment ends, or null if nothing convincing.
+function followMatch(words, query, expected, locked) {
+  const n = words.length, q = query.length;
+  if (!n || !q) return null;
+  const back = locked ? 20 : 300;
+  const fwd  = locked ? 150 : 600;
+  const lo = Math.max(0, Math.min(n - 1, expected) - back);
+  const hi = Math.min(n - 1, Math.max(0, expected) + fwd);
+  const width = hi - lo + 1;
+  if (width <= 0) return null;
+
+  // Smith-Waterman: H[k][j] = best local score ending at query[k-1], words[lo+j-1]
+  let prev = new Float32Array(width + 1);
+  let cur = new Float32Array(width + 1);
+  let best = null;
+  for (let k = 1; k <= q; k++) {
+    cur[0] = 0;
+    const qw = query[k - 1];
+    for (let j = 1; j <= width; j++) {
+      const sw = words[lo + j - 1];
+      const diag = prev[j - 1] + (followSimilar(sw, qw) ? 2 : -1);
+      const up = prev[j] - 1;
+      const left = cur[j - 1] - 1;
+      const h = Math.max(0, diag, up, left);
+      cur[j] = h;
+      // Only accept alignments that reach the tail of what was just said,
+      // so the position reflects the latest words, not an earlier phrase.
+      if (k >= q - 2 && h > 0) {
+        const idx = lo + j - 1;
+        const penalty = Math.abs(idx - expected) * (locked ? 0.02 : 0.004);
+        const score = h - penalty;
+        if (!best || score > best.score) best = { idx, score, raw: h };
+      }
+    }
+    const t = prev; prev = cur; cur = t;
+  }
+  if (!best) return null;
+  // Need at least ~3 matching words when locked, ~4 to acquire a fresh lock
+  const need = locked ? 5 : 7;
+  if (best.raw < need) return null;
+  return best;
+}
+
+// --- DOM-side ---
+function followBuildIndex() {
+  followWords = [];
+  prompterText.querySelectorAll('.line').forEach(el => {
+    const ws = followTokenize(el.textContent);
+    ws.forEach((w, i) => followWords.push({ w, el, frac: (i + 0.5) / ws.length }));
+  });
+  followNorm = followWords.map(x => x.w);
+}
+
+function followRowHeight() {
+  const fs = parseFloat(prompterText.style.fontSize) || 42;
+  const lh = parseFloat(prompterText.style.lineHeight) || 1.6;
+  return fs * lh;
+}
+
+// Scroll position that puts the given word on the guide line
+function followTargetPx(idx) {
+  const f = followWords[idx];
+  if (!f) return scrollPos;
+  const y = f.el.offsetTop + f.frac * f.el.offsetHeight;  // approx. vertical position of the word
+  const target = y - containerHeight * 0.5;   // word sits on the guide line (50%)
+  return Math.max(0, Math.min(totalHeight, target));
+}
+
+// First word of the line currently sitting on the guide (used before we lock on)
+function followWordNearScroll() {
+  if (!followWords.length) return 0;
+  const centerY = scrollPos + containerHeight * 0.5;
+  let bestI = 0, bestD = Infinity;
+  for (let i = 0; i < followWords.length; i++) {
+    const f = followWords[i];
+    const d = Math.abs(f.el.offsetTop + f.frac * f.el.offsetHeight - centerY);
+    if (d < bestD) { bestD = d; bestI = i; }
+  }
+  return bestI;
+}
+
+// Reader's current pace in px/s and words/min from recent matches
+function followRate(now) {
+  const cutoff = now - 4000;
+  while (followSamples.length && followSamples[0].t < cutoff) followSamples.shift();
+  if (now - followLastMatchTime > 1500) return { px: 0, wpm: 0 };   // gone quiet
+  if (followSamples.length < 2) return { px: 0, wpm: 0 };
+  const a = followSamples[0], b = followSamples[followSamples.length - 1];
+  const dt = (b.t - a.t) / 1000;
+  if (dt < 0.8) return { px: 0, wpm: 0 };
+  return { px: Math.max(0, (b.px - a.px) / dt), wpm: Math.max(0, (b.idx - a.idx) / dt * 60) };
+}
+
+// Called from tick(): returns the scroll speed to use right now (px/s)
+function followSpeed(now) {
+  const label = $('#voice-label');
+  if (followPos < 0) {
+    followEff = 0;
+    if (now - followHudAt > 250) {
+      followHudAt = now;
+      hudSpeed.textContent = 'auto · 0 px/s';
+      if (label) label.textContent = followLastSpeechTime ? 'Finding your place...' : 'Start reading...';
+    }
+    return 0;
+  }
+  const target = followTargetPx(followPos);
+  const err = target - scrollPos;              // + = reader is ahead of the guide
+  const rate = followRate(now);
+  const rowH = followRowHeight();
+  const gain = 1.2;                            // closes the gap in under a second
+  let eff = rate.px + err * gain;
+  const maxUp = Math.max(speed * 4, 400);       // catch-up limit when the reader is ahead
+  const maxBack = rowH * 1.5;                   // ease back gently if we overshot or the reader went back
+  eff = Math.max(-maxBack, Math.min(maxUp, eff));
+  if (rate.px === 0 && Math.abs(err) < 2) eff = 0;   // settled and reader is quiet
+  followEff = eff;
+
+  if (now - followHudAt > 250) {
+    followHudAt = now;
+    hudSpeed.textContent = 'auto · ' + Math.round(Math.max(0, eff)) + ' px/s';
+    if (label) {
+      if (rate.px > 0) label.textContent = 'Following · ' + Math.round(rate.wpm) + ' wpm';
+      else if (now - followLastMatchTime > 1500) label.textContent = 'Waiting for your voice';
+      else label.textContent = 'Following';
+    }
+  }
+  return eff;
+}
+
+function followResync() {
+  followPos = -1;
+  followSamples = [];
+}
+
+function followOnResult(ev) {
+  try {
+    const res = ev.results;
+    if (!res || !res.length) return;
+    let text = '';
+    for (let i = Math.max(0, res.length - 2); i < res.length; i++) text += ' ' + res[i][0].transcript;
+    const q = followTokenize(text).slice(-8);
+    if (!q.length) return;
+    const now = performance.now();
+    followLastSpeechTime = now;
+    const locked = followPos >= 0 && (now - followLastMatchTime) < 5000;
+    const expected = locked ? followPos : followWordNearScroll();
+    const m = followMatch(followNorm, q, expected, locked);
+    if (!m) return;
+    if (m.idx !== followPos) {
+      followPos = m.idx;
+      followSamples.push({ t: now, px: followTargetPx(m.idx), idx: m.idx });
+      if (followSamples.length > 40) followSamples.shift();
+    }
+    followLastMatchTime = now;
+  } catch (e) {
+    console.warn('Voice follow result error:', e);
+  }
+}
+
+function followStartRec() {
+  if (!followActive) return;
+  try {
+    followRec = new SpeechRec();
+    followRec.continuous = true;
+    followRec.interimResults = true;
+    followRec.maxAlternatives = 1;
+    followRec.lang = navigator.language || 'en-US';
+    followRec.onresult = followOnResult;
+    followRec.onerror = e => {
+      const err = e && e.error;
+      if (err === 'not-allowed' || err === 'service-not-allowed' || err === 'audio-capture') {
+        console.warn('Voice follow stopped:', err);
+        stopVoiceFollow();
+        followCheck.checked = false;
+        alert('Voice follow could not use the microphone (' + err + '). Allow the mic for this site and try again.');
+      }
+      // 'no-speech' / 'network' / 'aborted' fall through to onend, which restarts
+    };
+    followRec.onend = () => {
+      followRec = null;
+      if (followActive) followRestartTimer = setTimeout(followStartRec, 200);
+    };
+    followRec.start();
+  } catch (e) {
+    console.warn('Speech recognition start failed:', e);
+    if (followActive) followRestartTimer = setTimeout(followStartRec, 1000);
+  }
+}
+
+function startVoiceFollow() {
+  if (!SpeechRec) {
+    alert('Voice follow needs Chrome, Edge or Safari.');
+    followCheck.checked = false;
+    return;
+  }
+  if (voiceActive) { stopVoiceDetection(); voiceCheck.checked = false; }
+  followBuildIndex();
+  followActive = true;
+  followPos = -1;
+  followSamples = [];
+  followLastMatchTime = 0;
+  followLastSpeechTime = 0;
+  followEff = 0;
+  followHudAt = 0;
+  voiceIndicator.classList.remove('speaking', 'silent');
+  voiceIndicator.classList.add('active', 'following');
+  micDot.className = 'mic-dot following';
+  voiceMeterFill.style.width = '0%';
+  voiceLabel.textContent = 'Start reading...';
+  hudMode.textContent = tapMode ? '[TAP]' : '[FOLLOW]';
+  hudSpeed.textContent = 'auto · 0 px/s';
+  followStartRec();
+}
+
+function stopVoiceFollow() {
+  followActive = false;
+  if (followRestartTimer) { clearTimeout(followRestartTimer); followRestartTimer = null; }
+  if (followRec) {
+    const r = followRec; followRec = null;
+    r.onend = null; r.onresult = null; r.onerror = null;
+    try { r.stop(); } catch (e) { /* already stopped */ }
+  }
+  followPos = -1;
+  followSamples = [];
+  followEff = 0;
+  if (!voiceActive) voiceIndicator.classList.remove('active', 'speaking', 'silent');
+  voiceIndicator.classList.remove('following');
+  hudMode.textContent = tapMode ? '[TAP]' : '';
+  hudSpeed.textContent = speed + ' px/s';
+}
+
+function toggleFollow() {
+  if (followActive) {
+    stopVoiceFollow();
+    followCheck.checked = false;
+  } else {
+    followCheck.checked = true;
+    startVoiceFollow();
+  }
+  $('#follow-help').style.display = followCheck.checked ? 'block' : 'none';
+  saveAllSettings();
+}
+
 
 // ===== GITHUB EPISODES INTEGRATION =====
 // All GitHub access goes through a Supabase Edge Function that holds the
