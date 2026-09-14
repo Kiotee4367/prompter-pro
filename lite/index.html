@@ -789,13 +789,17 @@ function saveDismissed() { localStorage.setItem('prompter-dismissed', JSON.strin
 function episodeTitleFromName(name) {
   const dm = name.match(/(\d{4}-\d{2}-\d{2})/);
   const dateStr = dm ? dm[1] : name;
+  // Mark version-tagged files (episode-...-updated.txt, ...-test.txt, ...-v2.txt)
+  // so an updated re-run is distinguishable from the original same-date episode.
+  const vm = name.match(/-(updated|test|v\d+)\.txt$/i);
+  const ver = vm ? (/^(updated|test)$/i.test(vm[1]) ? ' (UPDATED)' : ` (${vm[1].toUpperCase()})`) : '';
   if (name.startsWith('topic-episode-')) {
     const m = name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
     const slugReadable = m ? m[1].replace(/-/g, ' ') : name;
-    return `Topic: ${slugReadable} (${dateStr})`;
+    return `Topic: ${slugReadable} (${dateStr})${ver}`;
   }
-  if (name.startsWith('special-topics-')) return `Special Topics ${dateStr}`;
-  return `Episode ${dateStr}`;
+  if (name.startsWith('special-topics-')) return `Special Topics ${dateStr}${ver}`;
+  return `Episode ${dateStr}${ver}`;
 }
 
 // Sort key: the YYYY-MM-DD embedded in a script title, or '' if none.

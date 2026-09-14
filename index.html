@@ -336,6 +336,7 @@
   }
   .gh-episode-item:hover { background: var(--border); }
   .gh-episode-item .ep-date { color: var(--fg); font-weight: 500; }
+  .ep-ver-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 8px; background: #22c55e; color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.3px; vertical-align: middle; }
   .gh-episode-item .ep-actions { display: flex; gap: 4px; opacity: 0; }
   .gh-episode-item:hover .ep-actions { opacity: 1; }
   .ep-brief-btn {
@@ -879,13 +880,18 @@ function saveDismissed() { localStorage.setItem('prompter-dismissed', JSON.strin
 function episodeTitleFromName(name) {
   const dm = name.match(/(\d{4}-\d{2}-\d{2})/);
   const dateStr = dm ? dm[1] : name;
+  // Mark version-tagged files (episode-...-updated.txt, ...-test.txt, ...-v2.txt)
+  // so an updated re-run gets a distinct title and is not deduped against the
+  // original same-date episode on auto-import.
+  const vm = name.match(/-(updated|test|v\d+)\.txt$/i);
+  const ver = vm ? (/^(updated|test)$/i.test(vm[1]) ? ' (UPDATED)' : ` (${vm[1].toUpperCase()})`) : '';
   if (name.startsWith('topic-episode-')) {
     const m = name.match(/topic-episode-\d{4}-\d{2}-\d{2}-(.+)\.txt$/);
     const slugReadable = m ? m[1].replace(/-/g, ' ') : name;
-    return `Topic: ${slugReadable} (${dateStr})`;
+    return `Topic: ${slugReadable} (${dateStr})${ver}`;
   }
-  if (name.startsWith('special-topics-')) return `Special Topics ${dateStr}`;
-  return `Episode ${dateStr}`;
+  if (name.startsWith('special-topics-')) return `Special Topics ${dateStr}${ver}`;
+  return `Episode ${dateStr}${ver}`;
 }
 
 // Sort key: the YYYY-MM-DD embedded in a script title, or '' if none.
@@ -2226,10 +2232,17 @@ async function ghFetchEpisodes() {
     else if (isSpecial) { label = 'Special Topics'; tag = dateStr; tagColor = '#f59e0b'; }
     else { label = 'Weekly Episode'; tag = dateStr; tagColor = 'var(--accent)'; }
 
+    // Flag version-tagged files so an updated re-run is obvious in the list.
+    // Matches episode-...-updated.txt, ...-test.txt, or ...-v2.txt (any -vN).
+    const verMatch = ep.name.match(/-(updated|test|v\d+)\.txt$/i);
+    const verBadge = verMatch
+      ? `<span class="ep-ver-badge">${/^(updated|test)$/i.test(verMatch[1]) ? 'UPDATED' : verMatch[1].toUpperCase()}</span>`
+      : '';
+
     const div = document.createElement('div');
     div.className = 'gh-episode-item';
     div.innerHTML = `<span class="ep-date" style="display:flex;flex-direction:column;gap:2px;">
-        <span style="font-weight:500;">${label}</span>
+        <span style="font-weight:500;">${label}${verBadge}</span>
         <span style="font-size:10px;color:${tagColor};">${tag}</span>
       </span><span class="ep-actions"><button class="ep-brief-btn" title="View research brief">Brief</button></span>`;
     div.querySelector('.ep-date').onclick = () => ghLoadEpisode(ep.path);
