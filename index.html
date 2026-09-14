@@ -1439,7 +1439,7 @@ function tick(now) {
   try {
     if (!paused) {
       const dt = (now - lastTime) / 1000;
-      let effectiveSpeed = followActive ? followSpeed(now) : speed;
+      let effectiveSpeed = followActive ? followSpeed(now, dt) : speed;
 
       // Ramp up/down (voice follow manages its own speed)
       const rc = $('#ramp-check');
@@ -1906,8 +1906,8 @@ function followSimilar(a, b) {
 function followMatch(words, query, expected, locked) {
   const n = words.length, q = query.length;
   if (!n || !q) return null;
-  const back = locked ? 20 : 300;
-  const fwd  = locked ? 150 : 600;
+  const back = locked ? 24 : 300;
+  const fwd  = locked ? 60 : 600;
   const lo = Math.max(0, Math.min(n - 1, expected) - back);
   const hi = Math.min(n - 1, Math.max(0, expected) + fwd);
   const width = hi - lo + 1;
@@ -1995,40 +1995,58 @@ function followRate(now) {
   return { px: Math.max(0, (b.px - a.px) / dt), wpm: Math.max(0, (b.idx - a.idx) / dt * 60) };
 }
 
-// Called from tick(): returns the scroll speed to use right now (px/s)
-function followSpeed(now) {
+// Called from tick(): returns the scroll speed to use right now (px/s).
+// It tracks the reader's measured pace plus a gentle, capped correction for
+// any position error, then eases toward that target with a slew-rate limit.
+// This keeps the scroll smooth: no sudden jumps and no runaway sprint, even
+// when a match briefly lands in the wrong place.
+function followSpeed(now, dt) {
   const label = $('#voice-label');
+  dt = Math.min(Math.max(dt || 0, 0), 0.05);    // ignore long/paused frames (tab switch, GC)
+  const accel = Math.max(speed * 3, 260);        // px/s^2: how fast the speed may change
+  const maxStep = accel * dt;
+  const slew = (desired) => {                     // ease followEff toward desired
+    if (desired > followEff) followEff = Math.min(desired, followEff + maxStep);
+    else                     followEff = Math.max(desired, followEff - maxStep);
+    return followEff;
+  };
+
   if (followPos < 0) {
-    followEff = 0;
+    slew(0);
     if (now - followHudAt > 250) {
       followHudAt = now;
-      hudSpeed.textContent = 'auto · 0 px/s';
+      hudSpeed.textContent = 'auto · ' + Math.round(Math.max(0, followEff)) + ' px/s';
       if (label) label.textContent = followLastSpeechTime ? 'Finding your place...' : 'Start reading...';
     }
-    return 0;
+    return followEff;
   }
+
   const target = followTargetPx(followPos);
-  const err = target - scrollPos;              // + = reader is ahead of the guide
+  const err = target - scrollPos;                // + = reader is ahead of the guide
   const rate = followRate(now);
   const rowH = followRowHeight();
-  const gain = 1.2;                            // closes the gap in under a second
-  let eff = rate.px + err * gain;
-  const maxUp = Math.max(speed * 4, 400);       // catch-up limit when the reader is ahead
-  const maxBack = rowH * 1.5;                   // ease back gently if we overshot or the reader went back
-  eff = Math.max(-maxBack, Math.min(maxUp, eff));
-  if (rate.px === 0 && Math.abs(err) < 2) eff = 0;   // settled and reader is quiet
-  followEff = eff;
+
+  const paceCap = Math.max(speed * 2, 220);      // real reading pace rarely exceeds this
+  const pace = Math.min(Math.max(0, rate.px), paceCap);
+  const corrCap = Math.max(speed * 1.2, 90);     // correction from position error, capped
+  const corr = Math.max(-rowH * 1.5, Math.min(corrCap, err * 0.8));
+  const ceil = Math.max(speed * 2.5, 240);       // absolute forward ceiling (no sprints)
+
+  let desired = Math.max(-rowH * 1.5, Math.min(ceil, pace + corr));
+  if (rate.px === 0 && Math.abs(err) < 3) desired = 0;   // settled and reader is quiet
+
+  slew(desired);
 
   if (now - followHudAt > 250) {
     followHudAt = now;
-    hudSpeed.textContent = 'auto · ' + Math.round(Math.max(0, eff)) + ' px/s';
+    hudSpeed.textContent = 'auto · ' + Math.round(Math.max(0, followEff)) + ' px/s';
     if (label) {
       if (rate.px > 0) label.textContent = 'Following · ' + Math.round(rate.wpm) + ' wpm';
       else if (now - followLastMatchTime > 1500) label.textContent = 'Waiting for your voice';
       else label.textContent = 'Following';
     }
   }
-  return eff;
+  return followEff;
 }
 
 function followResync() {
@@ -2050,6 +2068,14 @@ function followOnResult(ev) {
     const expected = locked ? followPos : followWordNearScroll();
     const m = followMatch(followNorm, q, expected, locked);
     if (!m) return;
+    // Reject implausible jumps while locked, so a stray mis-match can't
+    // teleport the position (which is what makes the scroll sprint to catch it).
+    if (locked && followPos >= 0) {
+      const gapS = Math.max(0.001, (now - followLastMatchTime) / 1000);
+      const maxFwd = Math.min(80, 9 * gapS + 6);   // ~9 words/sec is already very fast
+      const maxBack = 12;                           // allow small re-reads / backtracks
+      if (m.idx > followPos + maxFwd || m.idx < followPos - maxBack) return;
+    }
     if (m.idx !== followPos) {
       followPos = m.idx;
       followSamples.push({ t: now, px: followTargetPx(m.idx), idx: m.idx });
