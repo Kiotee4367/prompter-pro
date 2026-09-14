@@ -1440,6 +1440,7 @@ function tick(now) {
     if (!paused) {
       const dt = (now - lastTime) / 1000;
       let effectiveSpeed = followActive ? followSpeed(now, dt) : speed;
+      if (followActive) { try { readOnTick(now); } catch (e) { /* best-effort */ } }
 
       // Ramp up/down (voice follow manages its own speed)
       const rc = $('#ramp-check');
@@ -1534,6 +1535,9 @@ function togglePause() {
 function exitPrompter() {
   running = false;
   paused = false;
+  // Build the read-through review from this session before we tear follow down.
+  let _review = null;
+  try { if (followActive) _review = buildReadReview(); } catch (e) { console.warn('read review failed', e); }
   if (raf) cancelAnimationFrame(raf);
   if (timerInterval) clearInterval(timerInterval);
   stopWebcam();
@@ -1544,6 +1548,8 @@ function exitPrompter() {
   prompterView.style.display = 'none';
   editorView.style.display = 'flex';
   if (document.fullscreenElement) document.exitFullscreen();
+  if (_review) { try { showReadReview(_review); } catch (e) { /* non-fatal */ } }
+  readLog = null;
 }
 
 function adjustSpeed(delta) {
@@ -2082,6 +2088,7 @@ function followOnResult(ev) {
       if (followSamples.length > 40) followSamples.shift();
     }
     followLastMatchTime = now;
+    try { readOnMatch(now, followPos); } catch (e) { /* telemetry is best-effort */ }
   } catch (e) {
     console.warn('Voice follow result error:', e);
   }
@@ -2125,6 +2132,7 @@ function startVoiceFollow() {
   }
   if (voiceActive) { stopVoiceDetection(); voiceCheck.checked = false; }
   followBuildIndex();
+  try { readInit(); } catch (e) { console.warn('read telemetry init failed', e); }
   followActive = true;
   followPos = -1;
   followSamples = [];
@@ -2169,6 +2177,178 @@ function toggleFollow() {
   }
   $('#follow-help').style.display = followCheck.checked ? 'block' : 'none';
   saveAllSettings();
+}
+
+
+// ===== READ-THROUGH REVIEW (voice-follow telemetry) =====
+// While Voice Follow is on, we record which lines the reader's voice actually
+// reached, where they paused, and the pace per section. On exit we turn that
+// into a short, honest review with suggested script edits. Best-effort only:
+// every hook is wrapped in try/catch so it can never break the prompter.
+let readLog = null;
+
+function readInit() {
+  // Group the follow word list into lines with word-index ranges.
+  const lines = [];
+  let cur = null;
+  for (let i = 0; i < followWords.length; i++) {
+    const el = followWords[i].el;
+    if (!cur || cur.el !== el) {
+      cur = { el, text: (el.textContent || '').trim(), start: i, end: i, words: 0, read: 0, firstT: 0, lastT: 0 };
+      lines.push(cur);
+    }
+    cur.end = i; cur.words++;
+  }
+  // Tag section headers (ALL-CAPS lines) so we can bucket pace by segment.
+  let section = 'OPENING';
+  for (const ln of lines) {
+    const letters = ln.text.replace(/[^A-Za-z]/g, '');
+    ln.header = letters.length >= 3 && ln.text.length <= 48 && !/[a-z]/.test(letters);
+    if (ln.header) section = ln.text;
+    ln.section = section;
+  }
+  readLog = { start: performance.now(), lines, maxIdx: -1, lastIdx: -1, lastMatchT: 0, pauses: [], pauseOpen: false, matches: 0 };
+}
+
+function readLineOfIdx(idx) {
+  if (!readLog) return null;
+  const L = readLog.lines;
+  let lo = 0, hi = L.length - 1, ans = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (L[mid].start <= idx) { ans = L[mid]; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+
+function readOnMatch(now, idx) {
+  if (!readLog) return;
+  readLog.matches++;
+  const ln = readLineOfIdx(idx);
+  if (ln) { ln.read++; if (!ln.firstT) ln.firstT = now; ln.lastT = now; }
+  if (idx > readLog.maxIdx) readLog.maxIdx = idx;
+  readLog.lastIdx = idx;
+  readLog.lastMatchT = now;
+  readLog.pauseOpen = false;
+}
+
+function readOnTick(now) {
+  if (!readLog || readLog.lastMatchT === 0 || paused) return;
+  const gap = (now - readLog.lastMatchT) / 1000;
+  if (gap > 3.5) {
+    if (!readLog.pauseOpen) {
+      readLog.pauseOpen = true;
+      const ln = readLineOfIdx(readLog.lastIdx + 1) || readLineOfIdx(readLog.lastIdx);
+      readLog.pauses.push({ sec: gap, text: ln ? ln.text : '' });
+      if (readLog.pauses.length > 30) readLog.pauses.shift();
+    } else {
+      const p = readLog.pauses[readLog.pauses.length - 1];
+      if (p) p.sec = gap;
+    }
+  }
+}
+
+function buildReadReview() {
+  if (!readLog || readLog.matches < 8) return null;   // too little to judge
+  const now = performance.now();
+  const durS = Math.max(1, (now - readLog.start) / 1000);
+  const clk = s => Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+  const trunc = (t, n = 70) => (t.length > n ? t.slice(0, n - 1).trim() + '…' : t);
+
+  let targetMin = 20;
+  const rtLine = readLog.lines.find(l => /RUNTIME/i.test(l.text));
+  if (rtLine) { const m = rtLine.text.match(/(\d+)\s*MIN/i); if (m) targetMin = +m[1]; }
+
+  const content = readLog.lines.filter(l => !l.header && l.words >= 5 && l.start <= readLog.maxIdx);
+  const readCount = content.filter(l => l.read > 0).length;
+  // A line counts as skipped only if a nearby content line WAS heard, so a whole
+  // block of dropped recognition is not mistaken for a run of skips.
+  const skipped = content.filter((l, i) => l.read === 0 &&
+    content.slice(Math.max(0, i - 2), i + 3).some(x => x.read > 0));
+
+  const secMap = {};
+  for (const l of readLog.lines) {
+    if (l.header || !l.read || !l.firstT) continue;
+    const s = secMap[l.section] || (secMap[l.section] = { words: 0, t0: Infinity, t1: 0 });
+    s.words += l.words; s.t0 = Math.min(s.t0, l.firstT); s.t1 = Math.max(s.t1, l.lastT || l.firstT);
+  }
+  const secStats = Object.entries(secMap).map(([name, s]) => {
+    const dt = (s.t1 - s.t0) / 1000;
+    return { name, wpm: dt > 3 ? Math.round(s.words / dt * 60) : null, words: s.words };
+  }).filter(x => x.wpm && x.words >= 20);
+  const sortedWpm = secStats.map(x => x.wpm).slice().sort((a, b) => a - b);
+  const median = sortedWpm.length ? sortedWpm[Math.floor(sortedWpm.length / 2)] : 0;
+  const slowSecs = median ? secStats.filter(x => x.wpm < median * 0.65) : [];
+  const fastSecs = median ? secStats.filter(x => x.wpm > median * 1.6) : [];
+
+  const pauses = readLog.pauses.filter(p => p.sec >= 3.5 && p.text).slice(0, 6);
+
+  const L = [];
+  L.push('READ-THROUGH REVIEW');
+  L.push('Runtime ' + clk(durS) + '  (target ' + targetMin + ':00, ' +
+    (durS >= targetMin * 60 ? 'over by ' + clk(durS - targetMin * 60) : 'under by ' + clk(targetMin * 60 - durS)) + ')');
+  L.push('Voice reached ' + readCount + ' of ' + content.length + ' content lines.');
+  L.push('');
+
+  if (skipped.length) {
+    L.push('SKIPPED (never heard — cut it, or make it essential):');
+    skipped.slice(0, 8).forEach(l => L.push('  • "' + trunc(l.text) + '"'));
+    if (skipped.length > 8) L.push('  …and ' + (skipped.length - 8) + ' more.');
+    L.push('');
+  }
+  if (pauses.length) {
+    L.push('LONG PAUSES (hard transition or dense line):');
+    pauses.forEach(p => L.push('  • ' + p.sec.toFixed(1) + 's near: "' + trunc(p.text) + '"'));
+    L.push('');
+  }
+  if (slowSecs.length || fastSecs.length) {
+    L.push('PACE OUTLIERS (median ' + median + ' wpm):');
+    slowSecs.forEach(x => L.push('  • SLOW ' + x.wpm + ' wpm: ' + x.name + '  (dense — tighten)'));
+    fastSecs.forEach(x => L.push('  • FAST ' + x.wpm + ' wpm: ' + x.name + '  (make sure it is not rushed)'));
+    L.push('');
+  }
+
+  L.push('SUGGESTED SCRIPT UPDATES');
+  let n = 0;
+  skipped.slice(0, 6).forEach(l => { L.push('  • CUT (skipped): "' + trunc(l.text) + '"'); n++; });
+  pauses.slice(0, 4).forEach(p => { L.push('  • EASE (long pause): add a breath cue or simplify near "' + trunc(p.text) + '"'); n++; });
+  slowSecs.slice(0, 3).forEach(x => { L.push('  • TIGHTEN (slow): ' + x.name); n++; });
+  if (durS > targetMin * 60 * 1.1) { L.push('  • TRIM: ran ' + clk(durS - targetMin * 60) + ' long — cut roughly ' + Math.round((durS - targetMin * 60) / 60 * 150) + ' words.'); n++; }
+  else if (durS < targetMin * 60 * 0.85) { L.push('  • Ran ' + clk(targetMin * 60 - durS) + ' short — fine if intended, or add depth where you rushed.'); n++; }
+  if (!n) L.push('  • Clean read. Nothing to change.');
+  L.push('');
+  L.push('(Heuristic review from the live read. For a deeper AI review and a full');
+  L.push('revised script, run the Episode Performance Review on the recording.)');
+  return L.join('\n');
+}
+
+function showReadReview(text) {
+  let ov = $('#read-review');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'read-review';
+    ov.style.cssText = 'position:fixed;inset:0;background:#000a;z-index:120;display:flex;align-items:center;justify-content:center;padding:20px;';
+    ov.innerHTML =
+      '<div style="background:var(--bg,#111);color:var(--fg,#eee);max-width:680px;width:100%;max-height:85vh;display:flex;flex-direction:column;border:1px solid var(--border,#333);border-radius:12px;overflow:hidden;box-shadow:0 12px 48px #000a;">' +
+      '<div style="padding:14px 18px;font-weight:700;border-bottom:1px solid var(--border,#333);display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
+      '<span>Read-through Review</span>' +
+      '<span style="display:flex;gap:8px;">' +
+      '<button id="rr-copy" style="cursor:pointer;border:1px solid var(--border,#333);background:var(--accent,#3b82f6);color:#fff;border-radius:8px;padding:5px 12px;font-size:13px;font-weight:600;">Copy</button>' +
+      '<button id="rr-close" style="cursor:pointer;border:1px solid var(--border,#333);background:transparent;color:var(--fg,#eee);border-radius:8px;padding:5px 12px;font-size:13px;">Close</button>' +
+      '</span></div>' +
+      '<pre id="rr-body" style="margin:0;padding:16px 18px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:13px/1.55 ui-monospace,Menlo,Consolas,monospace;"></pre>' +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e => { if (e.target === ov) ov.style.display = 'none'; });
+    ov.querySelector('#rr-close').onclick = () => { ov.style.display = 'none'; };
+    ov.querySelector('#rr-copy').onclick = () => {
+      const body = ov.querySelector('#rr-body').textContent;
+      const btn = ov.querySelector('#rr-copy');
+      const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(body).then(done).catch(() => {});
+      else { const t = document.createElement('textarea'); t.value = body; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); done(); } catch (e) {} t.remove(); }
+    };
+  } else {
+    ov.style.display = 'flex';
+  }
+  ov.querySelector('#rr-body').textContent = text;
 }
 
 
