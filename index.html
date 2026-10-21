@@ -2437,6 +2437,23 @@ async function ghFetchEpisodes() {
   const data = await ghApiFetch('contents/output');
   if (!data) { ghEpisodeList.innerHTML = ''; return; }
 
+  // Episodes with a saved backup in previous-versions/ were revised via the
+  // Revise button: badge them UPDATED. Fetched silently — the folder not
+  // existing yet (no revisions ever made) just means no badges.
+  const revisedBases = new Set();
+  try {
+    const resp = await ghProxy({ action: 'read', endpoint: 'contents/output/previous-versions' });
+    if (resp && resp.ok) {
+      const prev = await resp.json();
+      if (Array.isArray(prev)) {
+        prev.forEach(f => {
+          const m = f.name.match(/^(.+)-before-\d{4}-\d{2}-\d{2}-\d{4}\.txt$/);
+          if (m) revisedBases.add(m[1]);
+        });
+      }
+    }
+  } catch (e) { /* no badges is fine */ }
+
   // Filter episode files and sort by embedded date, newest first (regardless of
   // prefix). Falls back to the filename as a tiebreaker for same-date episodes.
   const epDate = f => (f.name.match(/(\d{4}-\d{2}-\d{2})/) || [''])[0];
@@ -2470,10 +2487,13 @@ async function ghFetchEpisodes() {
 
     // Flag version-tagged files so an updated re-run is obvious in the list.
     // Matches episode-...-updated.txt, ...-test.txt, or ...-v2.txt (any -vN).
+    // Episodes revised in place (a backup exists in previous-versions/) get
+    // the same UPDATED badge.
     const verMatch = ep.name.match(/-(updated|test|v\d+)\.txt$/i);
+    const isRevised = revisedBases.has(ep.name.replace(/\.txt$/, ''));
     const verBadge = verMatch
       ? `<span class="ep-ver-badge">${/^(updated|test)$/i.test(verMatch[1]) ? 'UPDATED' : verMatch[1].toUpperCase()}</span>`
-      : '';
+      : (isRevised ? '<span class="ep-ver-badge">UPDATED</span>' : '');
 
     const div = document.createElement('div');
     div.className = 'gh-episode-item';
