@@ -567,9 +567,16 @@ window.onerror = function(msg, url, line, col, err) {
     <div class="brief-card" style="max-width:560px;">
       <h2><span id="revise-title">Request Revision</span><button class="close-brief" id="close-revise">&times;</button></h2>
       <div style="font-size:12px; color:var(--muted); margin-bottom:8px;" id="revise-episode-label"></div>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:6px; line-height:1.5;">
+        Your notes drive the revision. Tell it anything: what to cut, add, or reorder; tone
+        ("less salesy", "more direct"); length ("2 minutes shorter"); facts, stats, or stories
+        to include; names or products to mention; wording you want kept or changed.
+      </div>
       <textarea id="revise-feedback-input" rows="8"
-                placeholder="Your feedback, in plain English. For instance:&#10;- Cut segment 2, it drags&#10;- Add a story about a client win in segment 3&#10;- The close is too salesy, soften it"
-                style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:8px 10px; border-radius:5px; font-size:13px; font-family:inherit; line-height:1.5; resize:vertical; margin-bottom:8px;"></textarea>
+                placeholder="Your notes, in plain English. For instance:&#10;- Cut segment 2, it drags&#10;- Add a story about a client win in segment 3&#10;- Mention our new AI audit offer in the close&#10;- The close is too salesy, soften it"
+                style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:8px 10px; border-radius:5px; font-size:13px; font-family:inherit; line-height:1.5; resize:vertical; margin-bottom:6px;"></textarea>
+      <input type="text" id="revise-url-input" placeholder="Reference URL (optional: an article, product page, or source to pull from)"
+             style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px 8px; border-radius:5px; font-size:12px; font-family:inherit; margin-bottom:8px;">
       <button id="submit-revise-btn"
               style="width:100%; padding:8px 10px; background:#f59e0b22; color:#f59e0b; border:1px solid #f59e0b44; border-radius:5px; font-size:13px; cursor:pointer; font-weight:600;">
         &#9998; Send Feedback &amp; Revise Script
@@ -2850,6 +2857,7 @@ async function submitRevision() {
     {
       script_file: reviseTargetPath,
       feedback,
+      context_url: $('#revise-url-input').value.trim(),
       requested_at: new Date().toISOString()
     },
     `Revision request: ${reviseTargetPath}`,
@@ -2857,6 +2865,7 @@ async function submitRevision() {
   );
   if (ok) {
     $('#revise-feedback-input').value = '';
+    $('#revise-url-input').value = '';
     statusEl.textContent = '✓ Feedback sent! You will get an email when the revised script is ready (a few minutes). Then hit Refresh and click the episode to load the new version.';
     statusEl.style.color = '#22c55e';
   }
