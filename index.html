@@ -2866,8 +2866,10 @@ async function submitRevision() {
   if (ok) {
     $('#revise-feedback-input').value = '';
     $('#revise-url-input').value = '';
-    statusEl.textContent = '✓ Feedback sent! You will get an email when the revised script is ready (a few minutes). Then hit Refresh and click the episode to load the new version.';
-    statusEl.style.color = '#22c55e';
+    // Close the box; confirm in the GitHub Episodes panel instead. On failure
+    // the box stays open with the error so the notes are not lost.
+    $('#revise-modal').style.display = 'none';
+    ghSetStatus('✓ Feedback sent! Email arrives when the revised script is ready. Then hit Refresh and click the episode.', 'success');
   }
 }
 
